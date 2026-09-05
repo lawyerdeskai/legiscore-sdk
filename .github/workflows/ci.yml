@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor we advertise; 3.14 is what a partner starting today will use.
+        python-version: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e "python[dev]"
+      - name: Tests
+        run: pytest -q python
+      - name: Types
+        run: mypy --strict python/legiscore
+      - name: Lint
+        run: ruff check python
+
+  node:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - run: npm ci
+        working-directory: node
+      - run: npm test
+        working-directory: node
+      - run: npm run check
+        working-directory: node
+
+  views:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: views/package-lock.json
+      - run: npm ci
+        working-directory: views
+      - run: npm test
+        working-directory: views
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.12" }
+
+      - name: Versions must match across both packages
+        run: |
+          py=$(grep -m1 '^version = ' python/pyproject.toml | cut -d'"' -f2)
+          nd=$(node -p "require('./node/package.json').version")
+          echo "python=$py node=$nd"
+          if [ "$py" != "$nd" ]; then
+            echo "::error::Version parity broken. A partner on Python and a partner on Node must get the same behaviour from the same version."
+            exit 1
+          fi
+
+      - name: views is unpublished, or it joins the version rule
+        run: |
+          # The risk is not today's state, it is a quiet flip six weeks from now.
+          private=$(node -p "require('./views/package.json').private === true")
+          if [ "$private" != "true" ]; then
+            v=$(node -p "require('./views/package.json').version")
+            py=$(grep -m1 '^version = ' python/pyproject.toml | cut -d'"' -f2)
+            if [ "$v" != "$py" ]; then
+              echo "::error::views is no longer private, so it publishes — it must carry the same version as the other packages ($py), not $v."
+              exit 1
+            fi
+          fi
+
+      - name: Nothing on the publication denylist may reach this repo
+        # One list, in spec/sanitize_spec.py, shared with the spec build so a term can
+        # never be blocked in one place and allowed in the other. It covers backend
+        # internals, permission strings and customer data. Engineering notes live in
+        # internal/, which is gitignored and which this scan skips.
+        run: python3 spec/build_spec.py --scan .
+
+      - name: Postman files carry no customer data
+        run: |
+          # A live document id is customer data even though it is not credential-shaped,
+          # so the credential scan below waves it through. The one real leak we have had
+          # was a UUID inside a *collection*, not an environment, so this reads every
+          # JSON file under integrations/ and every id-shaped variable in it.
+          python3 - <<'PY'
+          import glob, json, re, sys
+          UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+          SENSITIVE = re.compile(r"key|token|secret|password|email|phone|_id$|^id$|Id$", re.I)
+          bad = []
+          for path in sorted(glob.glob("integrations/**/*.json", recursive=True)):
+              raw = open(path, encoding="utf-8").read()
+              for found in set(UUID.findall(raw)):
+                  bad.append(f"{path}: UUID-shaped value {found} — use {{{{a_variable}}}} or leave it empty")
+              document = json.loads(raw)
+              # environment exports use "values"; collections use "variable"
+              for entry in (document.get("values") or []) + (document.get("variable") or []):
+                  key, value = str(entry.get("key", "")), str(entry.get("value", "")).strip()
+                  if value and SENSITIVE.search(key):
+                      bad.append(f"{path}: {key} = {value[:24]} — must ship empty")
+          if bad:
+              print("::error::Customer data or a credential in a Postman file:")
+              print("\n".join(bad)); sys.exit(1)
+          print("integrations/ carries only scaffolding")
+          PY
+
+      - name: No credentials may reach this repo
+        run: |
+          # lsk_live_... is a documented placeholder; a real key has more after the prefix.
+          if git grep -InE 'lsk_live_[A-Za-z0-9]{8,}|BEGIN [A-Z ]*PRIVATE KEY|SUPABASE_SERVICE_KEY *=|password *= *"[^"]' -- . ':!.github/workflows/ci.yml'; then
+            echo "::error::Possible credential in tracked files."
+            exit 1
+          fi
+          echo "clean"
+
+  package-contents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: node/package-lock.json }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.12" }
+
+      - name: What npm would actually ship
+        working-directory: node
+        run: |
+          npm ci
+          npm run build
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          # The published tarball is build output plus docs. Source, tests and configs
+          # must never be in it.
+          # .d.ts declarations are shipped on purpose; .ts source is not.
+          if grep -qE 'dist/test/|tsconfig|\.env' /tmp/pack.txt \
+             || grep -E '\.ts$' /tmp/pack.txt | grep -qv '\.d\.ts$'; then
+            echo "::error::npm tarball contains tests, config or TypeScript source."
+            exit 1
+          fi
+
+      - name: What PyPI would actually ship
+        working-directory: python
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+          python - <<'PY'
+          import tarfile, glob, sys
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          names = tarfile.open(sdist).getnames()
+          banned = [n for n in names if "/.env" in n or n.endswith((".pem", ".key"))]
+          if banned:
+              print("::error::sdist contains", banned); sys.exit(1)
+          print(f"sdist: {len(names)} entries, clean")
+          PY
+
+  generated-artefacts:
+    # The spec and the reference collection are both generated from committed inputs, so
+    # this needs no network. It re-runs the whitelist, the curated descriptions and the
+    # denylist over the committed spec: a hand-edit that puts a description back, or that
+    # restores a withheld request field, fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.12" }
+      - name: The partner spec is exactly what the pipeline produces
+        working-directory: spec
+        run: python3 build_spec.py --check
+      - name: The Postman reference collection matches the spec
+        working-directory: spec
+        run: python3 build_postman.py --check

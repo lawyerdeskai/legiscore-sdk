@@ -1,0 +1,48 @@
+{
+  "name": "@legiscore/sdk",
+  "version": "0.1.0",
+  "description": "Node SDK for the LegiScore partner API — title search and legal opinion reports.",
+  "license": "Apache-2.0",
+  "author": "LawyerDesk Advocacy Pvt Ltd <info@legiscore.in>",
+  "homepage": "https://legiscore.in",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lawyerdeskai/legiscore-sdk.git",
+    "directory": "node"
+  },
+  "bugs": { "url": "https://github.com/lawyerdeskai/legiscore-sdk/issues" },
+  "keywords": [
+    "legiscore",
+    "title-search",
+    "legal-opinion",
+    "property",
+    "india",
+    "sdk",
+    "api-client"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/esm/index.d.ts", "default": "./dist/esm/index.js" },
+      "require": { "types": "./dist/cjs/index.d.ts", "default": "./dist/cjs/index.js" }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist/esm", "dist/cjs", "LICENSE", "README.md"],
+  "engines": { "node": ">=20" },
+  "publishConfig": { "access": "public", "provenance": true },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/write-cjs-package.mjs dist/cjs",
+    "build:test": "tsc -p tsconfig.test.json && node scripts/write-cjs-package.mjs dist/test",
+    "test": "npm run build && npm run build:test && node --test dist/test/test/*.test.js && npm run test:esm && npm run test:cjs",
+    "test:esm": "node --input-type=module -e \"import * as sdk from './dist/esm/index.js'; if (typeof sdk.LegiScore !== 'function' || typeof sdk.verifyWebhook !== 'function') throw new Error('ESM entry point is missing an export');\"",
+    "test:cjs": "node -e \"const sdk = require('./dist/cjs/index.js'); if (typeof sdk.LegiScore !== 'function' || typeof sdk.verifyWebhook !== 'function') throw new Error('CJS entry point is missing an export');\"",
+    "check": "npx --yes publint && npx --yes @arethetypeswrong/cli --pack ."
+  },
+  "devDependencies": { "typescript": "^5.4.0", "@types/node": "^20.0.0" }
+}

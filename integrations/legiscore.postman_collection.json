@@ -1,0 +1,768 @@
+{
+  "info": {
+    "name": "LegiScore Partner API: guided flow",
+    "description": "The report flow, in the order you run it. Folders are numbered: work down them.\n\nTHE ONE THING TO KNOW\n  The three enable*Review flags default to TRUE. With them on, a run pauses and waits for you\n  indefinitely, there is no timeout and no auto-proceed. Use 2a for unattended runs.\n\nSETUP\n  1. Import this collection and its environment.\n  2. Set api_key to your lsk_ key. base_url is preset to https://opinion.legiscore.in.\n  3. Run folders in order: 0 -> 1 -> 2a -> 3 (poll) -> 8.\n\nRequests chain themselves: presign captures the upload URL, complete captures document_id,\ncreate captures case_id. Run them in order and you never copy an id by hand.\n\nAuth is collection-level: X-API-Key. (Authorization: Bearer <key> also works.)\n\nEvery endpoint, including the ones this flow does not use, is in the reference collection\nalongside this file. That one is generated from the OpenAPI spec.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{api_key}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0. Pre-flight",
+      "description": "Run these two first. If either fails, stop \u2014 nothing downstream will work.",
+      "item": [
+        {
+          "name": "0a. Check credits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/credits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "credits"
+              ]
+            },
+            "description": "Confirms three things at once: your key is valid, it is bound to your organisation, and the org wallet has credits. A report costs 1 credit.\n\nIf this 401s, the key is wrong. If the balance looks like a personal wallet rather than the org's, the key is not org-bound \u2014 tell us and we'll fix it."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "console.log('Credits payload:', JSON.stringify(j));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0b. List scenarios (optional)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/custom-field-configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "custom-field-configs"
+              ]
+            },
+            "description": "Optional. Shows the custom-field schemas configured for your org."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "1. Upload the document",
+      "description": "Three calls: ask for a signed URL, PUT the bytes straight to storage, then tell us it landed.\n\nIMPORTANT: 1b must fully finish (200) before you call 1c. Calling 1c early returns 422 object_not_found \u2014 that is the single most common integration mistake.",
+      "item": [
+        {
+          "name": "1a. Presign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/presign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "presign"
+              ]
+            },
+            "description": "fileSize must be the real byte count. The returned uploadUrl expires in 60 minutes.\n\nSaves uploadUrl + objectName into the environment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileName\": \"sale_deed.pdf\",\n  \"fileSize\": 7943210,\n  \"contentType\": \"application/pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j && j.success) {",
+                  "  pm.environment.set('upload_url', j.uploadUrl);",
+                  "  pm.environment.set('object_name', j.objectName);",
+                  "  pm.test('uploadUrl captured', () => pm.expect(j.uploadUrl).to.be.a('string'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1b. PUT the bytes to storage",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/pdf"
+              }
+            ],
+            "url": {
+              "raw": "{{upload_url}}",
+              "host": [
+                "{{upload_url}}"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "/absolute/path/to/sale_deed.pdf"
+              }
+            },
+            "description": "Select your file under Body > binary before sending.\n\nTwo rules: the Content-Type here MUST match what you sent in 1a, and you must wait for the 200 before calling 1c.\n\nThis goes directly to object storage \u2014 it does not pass through our API, so your key is not sent here."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Upload returned 200 \u2014 safe to call 1c now', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1c. Complete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/complete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "complete"
+              ]
+            },
+            "description": "Registers the uploaded object as a document and returns document_id.\n\n422 object_not_found here means the PUT in 1b had not finished. Wait and retry \u2014 do not re-presign.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"success\": true,\n  \"fileName\": \"sale_deed.pdf\",\n  \"fileSize\": 7943210,\n  \"objectName\": \"{{object_name}}\",\n  \"contentType\": \"application/pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j && j.document_id) {",
+                  "  pm.environment.set('document_id', j.document_id);",
+                  "  pm.collectionVariables.set('documentId', j.document_id);",
+                  "  pm.test('document_id captured', () => pm.expect(j.document_id).to.be.a('string'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Create the report",
+      "description": "Pick ONE of these two. They differ only in the three review flags.\n\nREAD THIS: the three enable*Review flags DEFAULT TO TRUE if you omit them. With them on, the run pauses and waits for you \u2014 it will not finish on its own, ever. There is no timeout. Use 2a unless you are deliberately driving the checkpoints.",
+      "item": [
+        {
+          "name": "2a. Straight-through (RECOMMENDED \u2014 no checkpoints)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Retry-safe: same key + same body returns the original response instead of creating a duplicate case."
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/requests",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "requests"
+              ]
+            },
+            "description": "Uses the {{documentId}} collection variable. It ships empty: run folder 1 first and 1c fills it in for you, or paste in a document id you already hold.\n\nAll three review flags OFF. The run goes end to end unattended and reaches completed with no further calls from you. This is what you want for automated/LOS-driven volume.\n\ndocumentIds MUST be an array, even for one document.\n\nCharges 1 credit from your organisation's wallet at creation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentIds\": [\n    \"{{documentId}}\"\n  ],\n  \"propertyFocus\": {\n    \"property_type\": \"building\",\n    \"state\": \"Andhra Pradesh\",\n    \"state_id\": 2,\n    \"property_details\": {\n      \"house_no\": \"1-23\",\n      \"survey_nos\": \"123\",\n      \"village_city\": \"Example Village\",\n      \"district\": \"Example District\"\n    }\n  },\n  \"case_name\": \"API test \\u2014 Example District\",\n  \"enableDocumentAnalysisReview\": false,\n  \"enableMissingDocumentReview\": false,\n  \"enableAcknowledgementReview\": false,\n  \"metadata\": {\n    \"your_reference_id\": \"REF-0000-00000\",\n    \"loan_id\": \"LN-000000\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j && j.case_id) {",
+                  "  pm.environment.set('case_id', j.case_id);",
+                  "  pm.test('case_id captured', () => pm.expect(j.case_id).to.be.a('string'));",
+                  "  console.log('Case created:', j.case_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2b. Interactive (checkpoints ON \u2014 you must drive folders 4/5/6)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/requests",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "requests"
+              ]
+            },
+            "description": "Uses the {{documentId}} collection variable. It ships empty: run folder 1 first and 1c fills it in for you, or paste in a document id you already hold.\n\nAll three review flags ON. The run will PAUSE up to three times and sit in awaiting_review until you call the matching resume endpoint in folders 4, 5 and 6.\n\nIf you only poll /status and never resume, this case never completes.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentIds\": [\n    \"{{documentId}}\"\n  ],\n  \"propertyFocus\": {\n    \"property_type\": \"building\",\n    \"state\": \"Andhra Pradesh\",\n    \"state_id\": 2,\n    \"property_details\": {\n      \"house_no\": \"1-23\",\n      \"survey_nos\": \"123\",\n      \"village_city\": \"Example Village\",\n      \"district\": \"Example District\"\n    }\n  },\n  \"case_name\": \"API test \\u2014 Example District (interactive)\",\n  \"enableDocumentAnalysisReview\": true,\n  \"enableMissingDocumentReview\": true,\n  \"enableAcknowledgementReview\": true,\n  \"metadata\": {\n    \"your_reference_id\": \"REF-0000-00000\",\n    \"loan_id\": \"LN-000000\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j && j.case_id) {",
+                  "  pm.environment.set('case_id', j.case_id);",
+                  "  pm.test('case_id captured', () => pm.expect(j.case_id).to.be.a('string'));",
+                  "  console.log('Case created:', j.case_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Poll status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/cases/{{case_id}}/status",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "cases",
+            "{{case_id}}",
+            "status"
+          ]
+        },
+        "description": "Poll every 15\u201330s. Read the `state` field \u2014 it is a stable 5-value vocabulary:\n\n  queued      \u2014 accepted, not started\n  running     \u2014 processing\n  awaiting_review \u2014 PAUSED at a checkpoint; read internal_status to see which\n  completed   \u2014 done, call folder 7\n  failed      \u2014 terminal\n\nA straight-through run typically takes several minutes.\n\nThis call is free and side-effect free."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "console.log(`state=${j.state} internal=${j.internal_status} progress=${j.progress} :: ${j.message}`);",
+              "if (j.state === 'awaiting_review') {",
+              "  console.log('PAUSED \u2014 resume via folder 4/5/6 depending on internal_status');",
+              "}",
+              "pm.test(`state is ${j.state}`, () => pm.expect(j.state).to.be.a('string'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Checkpoint 1 \u2014 Document analysis",
+      "description": "CHECKPOINT 1 \u2014 DOCUMENT ANALYSIS\n\nYOU ARE HERE WHEN:\n  GET /api/cases/{id}/status returns\n      \"state\":           \"awaiting_review\"\n      \"internal_status\": \"awaiting_document_review\"\n  (webhook equivalent: event report.paused.review, data.stage = \"document_review\")\n\nWHAT PAUSED, IN PLAIN TERMS:\n  We have read your documents and pulled out the key facts \u2014 document number, date,\n  parties, survey number, house number. We are showing you what we extracted before we\n  spend money running government searches against it. A wrong survey number here means\n  every search downstream is wrong.\n\nHOW TO PROCEED \u2014 two ways:\n\n  (a) Accept the extraction as-is  [most common]\n      POST /api/cases/{id}/submit-document-review\n      { \"updates\": [], \"proceed_to_searches\": true }\n\n  (b) Correct something first\n      POST /api/cases/{id}/submit-document-review\n      { \"updates\": [\n          { \"document_id\": \"<from 4a>\", \"field_name\": \"survey_number\", \"new_value\": \"21/A\" }\n        ],\n        \"proceed_to_searches\": true }\n\n      field_name must be one of the editable_fields returned by 4a:\n      document_number, document_date, parties, survey_number, house_number\n\nAFTER THIS: state returns to \"running\" and external searches begin.",
+      "item": [
+        {
+          "name": "4a. Read what needs review",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/document-review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "document-review"
+              ]
+            },
+            "description": "Returns the extracted fields per document plus editable_fields."
+          },
+          "response": []
+        },
+        {
+          "name": "4b. Approve and continue",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/submit-document-review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "submit-document-review"
+              ]
+            },
+            "description": "Send updates: [] to accept the AI extraction as-is.\n\nTo correct a field: {\"document_id\": \"...\", \"field_name\": \"survey_number\", \"new_value\": \"21/A\"} \u2014 field_name must be one of editable_fields from 4a.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"updates\": [],\n  \"proceed_to_searches\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. Checkpoint 2 \u2014 Missing documents",
+      "description": "CHECKPOINT 2 \u2014 MISSING DOCUMENTS\n\nYOU ARE HERE WHEN:\n  GET /api/cases/{id}/status returns\n      \"state\":           \"awaiting_review\"\n      \"internal_status\": \"awaiting_documents\"\n  (webhook equivalent: event report.paused.missing_documents, data.stage = \"missing_documents\")\n\nWHAT PAUSED, IN PLAIN TERMS:\n  The analysis found the title chain needs documents you have not given us \u2014 typically an\n  Encumbrance Certificate or a parent/link deed. You decide: supply them, or go ahead\n  without them and let the report record the gap.\n\nHOW TO PROCEED \u2014 three ways:\n\n  (a) Go ahead without them  [the unattended default]\n      POST /api/cases/{id}/continue\n      { \"new_document_ids\": [], \"proceed_anyway\": true }\n      The report is produced and states what was missing.\n\n  (b) Supply the missing documents\n      1. Upload each one through folder 1 (presign -> PUT -> complete)\n      2. POST /api/cases/{id}/continue\n         { \"new_document_ids\": [\"<new document_id>\"], \"proceed_anyway\": false }\n\n  (c) Supply them AND say which gap each one fills  [optional, most precise]\n      1. Upload through folder 1\n      2. PATCH /api/cases/{id}/missing-documents/{slot_index}/link\n         { \"document_ids\": [\"<new document_id>\"] }\n         slot_index = 0-based position in the missing_documents[] array from 5a\n      3. POST /api/cases/{id}/continue  { \"new_document_ids\": [], \"proceed_anyway\": false }\n\nNOTE: 5a returns iteration / max_iterations. We can ask more than once (up to 3 rounds) as\nnew documents reveal new gaps.\n\nRETURNS 400 if the case is not actually awaiting documents \u2014 check status first.",
+      "item": [
+        {
+          "name": "5a. Read the missing list",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/missing-documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "missing-documents"
+              ]
+            },
+            "description": "Returns missing_documents[] plus iteration / max_iterations."
+          },
+          "response": []
+        },
+        {
+          "name": "5b. Link an uploaded doc to a slot (optional)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/missing-documents/{{slot_index}}/link",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "missing-documents",
+                "{{slot_index}}",
+                "link"
+              ]
+            },
+            "description": "Optional. Upload the new document via folder 1 first, then attach it to a specific missing-document slot. slot_index is the 0-based position in missing_documents[] from 5a.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_ids\": [\n    \"{{document_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5c. Continue",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/continue",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "continue"
+              ]
+            },
+            "description": "proceed_anyway: true continues without supplying the remaining documents \u2014 the report will say what was missing.\n\nTo supply them instead: upload via folder 1, then pass the ids in new_document_ids and set proceed_anyway: false.\n\nReturns 400 if the case is not actually awaiting documents.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_document_ids\": [],\n  \"proceed_anyway\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6. Checkpoint 3 \u2014 Risk acknowledgement",
+      "description": "CHECKPOINT 3 \u2014 RISK ACKNOWLEDGEMENT\n\nYOU ARE HERE WHEN:\n  GET /api/cases/{id}/status returns\n      \"state\":           \"awaiting_review\"\n      \"internal_status\": \"awaiting_acknowledgements\"\n  (webhook equivalent: event report.paused.acknowledgements, data.stage = \"acknowledgements\")\n\nWHAT PAUSED, IN PLAIN TERMS:\n  The diligence found risks on the title. Before we issue the report, someone on your side\n  has to say, on the record, that your credit team accepts them. This is the last gate.\n\nHOW TO PROCEED:\n\n  POST /api/cases/{id}/submit-acknowledgements\n  { \"acknowledgements\": [\n      { \"id\": \"risk_1\", \"decision\": \"accepted\", \"bypass_reason\": \"Accepted by credit team\" },\n      { \"id\": \"risk_2\", \"decision\": \"rejected\", \"bypass_reason\": \"Not acceptable to credit\" }\n    ] }\n\n  One entry per risk returned by 6a. Send each item back WHOLE \u2014 spread the object 6a gave\n  you and add the decision \u2014 because a field you drop is a field the report loses.\n\n    decision: \"accepted\"    your team accepts this risk, proceed\n    decision: \"rejected\"    not accepted \u2014 it stays flagged in the report\n    decision: \"undecided\"   no call made on it yet\n\n  An item sent with NO decision acknowledges nothing, so a case can look answered when\n  nothing was actually decided.\n\n  Do not send is_bypassed yourself. The server derives it from decision, and sending both\n  is rejected when they disagree.\n\n  bypass_reason is written into the report verbatim. Make it something you would be\n  comfortable showing an auditor.\n\nREAD THIS BEFORE AUTOMATING IT:\n  This call creates a legal acceptance record, attributed to whoever's API key made it.\n  Do not blanket-accept every risk from a script. If your process is that a human approves,\n  that human's decision should be what drives this call.\n\nAFTER THIS: state returns to \"running\" and final report generation starts.",
+      "item": [
+        {
+          "name": "6a. Read the risks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/acknowledgements",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "acknowledgements"
+              ]
+            },
+            "description": "Returns the risk points raised during analysis."
+          },
+          "response": []
+        },
+        {
+          "name": "6b. Acknowledge and generate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/submit-acknowledgements",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "submit-acknowledgements"
+              ]
+            },
+            "description": "One entry per risk from 6a, sent back whole with a decision added: \"accepted\", \"rejected\" or \"undecided\". An item with no decision acknowledges nothing. Do not set is_bypassed \u2014 the server derives it from decision, and sending both is rejected when they disagree. bypass_reason is recorded in the report verbatim.\n\nThis is a legal acceptance record \u2014 it is attributed to whoever's key made the call.\n\nSubmitting launches final report generation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"acknowledgements\": [\n    {\n      \"id\": \"risk_1\",\n      \"decision\": \"accepted\",\n      \"bypass_reason\": \"Accepted by credit team\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "7. Event-driven mode (instead of polling)",
+      "description": "WHERE THE WEBHOOK URL GOES: NOWHERE IN YOUR CALLS.\nThis is the one piece of the integration you never send on a request. You give us the URL\nonce, we store it against your API key, and from then on WE call YOU. The\n{{your_webhook_url}} environment variable exists only so the example below renders \u2014 it is\nnever a body field and never a header.\n\nTO TURN IT ON: register the endpoint yourself with POST /api/v1/webhooks (client.webhooks in\neither SDK), or send us the URL and we will register it for you. The signing secret comes back\nexactly once, at create or rotate \u2014 store it then, because nothing can read it back.\n\nWHY BOTHER: it replaces folder 3. Instead of polling, you get told the moment a run pauses\nor finishes \u2014 and told exactly WHICH checkpoint paused, so you know which call to make next.\n\nEVENT -> data.stage -> the call you make:\n  report.paused.review            -> document_review   -> folder 4  submit-document-review\n  report.paused.missing_documents -> missing_documents -> folder 5  continue\n  report.paused.acknowledgements  -> acknowledgements  -> folder 6  submit-acknowledgements\n  report.completed                -> -                 -> folder 8  result\n  report.failed                   -> -                 -> stop\n\nEvery pause callback carries, under data:\n  stage            which checkpoint (the 3 values above)\n  state            always \"awaiting_review\"\n  internal_status  the precise internal status\n  pause_reason     short category line, never empty\n  pause_detail     full remark with counts and specifics, never empty\n  metadata         your own correlation blob, echoed back verbatim\n\nSigned with X-LegiScore-Signature (HMAC-SHA256 over timestamp + body) and retried on failure.\nWe can also map the payload field-by-field into your own schema so it arrives shaped like\nyour objects rather than ours \u2014 we configure that on our side.",
+      "item": [
+        {
+          "name": "7a. Example pause callback WE would POST to YOU",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-LegiScore-Signature",
+                "value": "<hmac-sha256 of timestamp + body>"
+              }
+            ],
+            "url": {
+              "raw": "{{your_webhook_url}}",
+              "host": [
+                "{{your_webhook_url}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delivery_id\": \"whd_01J\\u2026\",\n  \"event\": \"report.paused.missing_documents\",\n  \"api_version\": \"2026-04-26\",\n  \"occurred_at\": 1756200000,\n  \"data\": {\n    \"case_id\": \"{{case_id}}\",\n    \"stage\": \"missing_documents\",\n    \"state\": \"awaiting_review\",\n    \"internal_status\": \"awaiting_documents\",\n    \"pause_reason\": \"Awaiting supporting documents\",\n    \"pause_detail\": \"2 documents required: Encumbrance Certificate, Link Document (parent deed).\",\n    \"metadata\": {\n      \"your_reference_id\": \"REF-0000-00000\",\n      \"loan_id\": \"LN-000000\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Reference only \u2014 do not send this. This is the shape WE post to YOUR url.\n\nRead data.stage, call the matching resume endpoint from folder 4/5/6, done. Your metadata rides along so you never need a case-id mapping table."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "8. Get the report",
+      "description": "Once state = completed.",
+      "item": [
+        {
+          "name": "8a. Report JSON",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/result",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "result"
+              ]
+            },
+            "description": "The structured report \u2014 findings, risks, title chain, custom fields, LegiScore. This is the machine-readable deliverable and what you map into your own system."
+          },
+          "response": []
+        },
+        {
+          "name": "8b. Source and search artifacts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/files?kinds=uploaded,added_during_review,search_artifact,report_json",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "files"
+              ],
+              "query": [
+                {
+                  "key": "kinds",
+                  "value": "uploaded,added_during_review,search_artifact,report_json"
+                }
+              ]
+            },
+            "description": "Lists the uploaded documents, everything added during review, and the raw government-search artifacts."
+          },
+          "response": []
+        },
+        {
+          "name": "8c. Everything as a ZIP",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/cases/{{case_id}}/files/zip?kinds=uploaded,search_artifact,report_json",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{case_id}}",
+                "files",
+                "zip"
+              ],
+              "query": [
+                {
+                  "key": "kinds",
+                  "value": "uploaded,search_artifact,report_json"
+                }
+              ]
+            },
+            "description": "Same set as 7b, streamed as a single ZIP."
+          },
+          "response": []
+        },
+        {
+          "name": "8d. Branded report as PDF / Word",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/documents/{{case_id}}?format=pdf",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "documents",
+                "{{case_id}}"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "pdf",
+                  "description": "pdf or docx"
+                }
+              ]
+            },
+            "description": "The rendered, branded report document.\n\nNOTE: this is a separate endpoint from /files \u2014 the ZIP and file list deliberately do NOT include the rendered report. Uploads and search artifacts come from 7b/7c; the document comes from here.\n\nUse Send and Download in Postman to save the file."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "documentId",
+      "value": "",
+      "type": "string",
+      "description": "A document id to create a case from. Ships empty. Folder 1c fills it in for you, or paste in an id you already hold."
+    }
+  ]
+}

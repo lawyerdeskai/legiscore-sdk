@@ -1,0 +1,73 @@
+[project]
+name = "legiscore"
+version = "0.1.0"
+description = "Python SDK for the LegiScore partner API — title search and legal opinion reports."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "LawyerDesk Advocacy Pvt Ltd", email = "info@legiscore.in" }]
+keywords = ["legiscore", "title-search", "legal-opinion", "property", "india", "due-diligence"]
+dependencies = ["httpx>=0.27,<1"]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Legal Industry",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Office/Business :: Financial",
+  "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy", "ruff", "build", "twine"]
+
+[project.urls]
+Homepage = "https://legiscore.in"
+Documentation = "https://github.com/lawyerdeskai/legiscore-sdk#readme"
+Repository = "https://github.com/lawyerdeskai/legiscore-sdk"
+Issues = "https://github.com/lawyerdeskai/legiscore-sdk/issues"
+Changelog = "https://github.com/lawyerdeskai/legiscore-sdk/releases"
+
+# 1.27 is the first release that understands the PEP 639 `license` / `license-files` fields above.
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["legiscore"]
+
+# The test harness is not part of what a partner installs, and neither is the example script:
+# both live in the repo, which the Documentation and Repository URLs above point at.
+[tool.hatch.build.targets.sdist]
+exclude = [".gitignore", "conftest.py", "tests", "examples"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Generated: a percent-encoded path literal cannot be split, so some lines run long.
+"legiscore/_operations.py" = ["E501"]
+# The self-check runner reads better with one-line handlers than with a def per response.
+"tests/*" = ["E731"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

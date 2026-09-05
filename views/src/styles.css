@@ -1,0 +1,97 @@
+/*
+ * Optional. Every rule is driven by the variables below, so a partner restyles the whole set
+ * by redefining them on any ancestor. Skip this file entirely and target the `lsc-` classes.
+ */
+.lsc-flow,
+.lsc-panel,
+.lsc-status {
+  --lsc-accent: #ea580c;
+  --lsc-accent-fg: #ffffff;
+  --lsc-fg: #1c1917;
+  --lsc-muted: #78716c;
+  --lsc-bg: #ffffff;
+  --lsc-subtle: #fafaf9;
+  --lsc-border: #e7e5e4;
+  --lsc-danger: #b91c1c;
+  --lsc-warn: #b45309;
+  --lsc-radius: 8px;
+  --lsc-gap: 12px;
+  color: var(--lsc-fg);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lsc-flow, .lsc-panel, .lsc-status {
+    --lsc-fg: #fafaf9;
+    --lsc-muted: #a8a29e;
+    --lsc-bg: #1c1917;
+    --lsc-subtle: #292524;
+    --lsc-border: #44403c;
+    --lsc-danger: #f87171;
+    --lsc-warn: #fbbf24;
+  }
+}
+
+.lsc-flow { display: flex; flex-direction: column; gap: 16px; }
+
+.lsc-status { display: flex; align-items: center; gap: var(--lsc-gap); }
+.lsc-badge { padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--lsc-subtle); border: 1px solid var(--lsc-border); }
+.lsc-badge-completed { color: #15803d; border-color: currentColor; }
+.lsc-badge-failed { color: var(--lsc-danger); border-color: currentColor; }
+.lsc-badge-awaiting_review { color: var(--lsc-warn); border-color: currentColor; }
+.lsc-progress { flex: 1; height: 6px; border-radius: 999px; background: var(--lsc-subtle); overflow: hidden; }
+.lsc-progress-fill { height: 100%; background: var(--lsc-accent); transition: width .4s ease; }
+.lsc-status-meta { color: var(--lsc-muted); font-size: 13px; white-space: nowrap; }
+
+.lsc-panel { background: var(--lsc-bg); border: 1px solid var(--lsc-border); border-radius: var(--lsc-radius); padding: 20px; display: flex; flex-direction: column; gap: var(--lsc-gap); }
+.lsc-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--lsc-gap); }
+.lsc-panel-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+
+.lsc-note { margin: 0; padding: 10px 12px; border-radius: var(--lsc-radius); background: var(--lsc-subtle); color: var(--lsc-muted); font-size: 14px; }
+.lsc-note-warn { color: var(--lsc-warn); }
+.lsc-note-error { color: var(--lsc-danger); }
+
+.lsc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.lsc-item { border: 1px solid var(--lsc-border); border-radius: var(--lsc-radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.lsc-item-muted { opacity: .55; }
+.lsc-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lsc-item-body { margin: 0; }
+.lsc-item-actions { display: flex; align-items: center; gap: var(--lsc-gap); flex-wrap: wrap; }
+
+.lsc-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--lsc-subtle); border: 1px solid var(--lsc-border); color: var(--lsc-muted); }
+.lsc-chip-btn { cursor: pointer; }
+.lsc-chip-btn:hover { border-color: var(--lsc-accent); color: var(--lsc-accent); }
+.lsc-code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--lsc-muted); }
+.lsc-sources { margin: 0; font-size: 13px; color: var(--lsc-muted); }
+.lsc-suggestions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.lsc-sev { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.lsc-sev-critical { color: var(--lsc-danger); }
+.lsc-sev-major { color: var(--lsc-warn); }
+.lsc-sev-minor { color: var(--lsc-muted); }
+
+.lsc-input { flex: 1; min-width: 140px; padding: 6px 10px; border: 1px solid var(--lsc-border); border-radius: 6px; background: var(--lsc-bg); color: inherit; font: inherit; font-size: 14px; }
+.lsc-input:focus-visible { outline: 2px solid var(--lsc-accent); outline-offset: 1px; }
+.lsc-check, .lsc-radio { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.lsc-radio-on { color: var(--lsc-accent); font-weight: 600; }
+.lsc-upload { display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px dashed var(--lsc-border); border-radius: var(--lsc-radius); cursor: pointer; font-size: 14px; }
+
+.lsc-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--lsc-gap); }
+.lsc-btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--lsc-border); background: var(--lsc-bg); color: inherit; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.lsc-btn:disabled { opacity: .5; cursor: not-allowed; }
+.lsc-btn-primary { background: var(--lsc-accent); border-color: var(--lsc-accent); color: var(--lsc-accent-fg); }
+.lsc-btn-ghost:hover:not(:disabled) { border-color: var(--lsc-accent); color: var(--lsc-accent); }
+
+.lsc-scroll { overflow-x: auto; }
+.lsc-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lsc-table th, .lsc-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--lsc-border); vertical-align: top; }
+.lsc-table thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--lsc-muted); }
+.lsc-table tbody tr:nth-child(even) { background: var(--lsc-subtle); }
+.lsc-doc-name { display: block; font-weight: 600; }
+
+.lsc-score { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--lsc-border); }
+.lsc-score-cell { display: flex; flex-direction: column; }
+.lsc-score-value { font-size: 22px; font-weight: 700; }
+.lsc-section { display: flex; flex-direction: column; gap: 6px; }
+.lsc-section-title { margin: 8px 0 0; font-size: 14px; font-weight: 600; color: var(--lsc-muted); text-transform: uppercase; letter-spacing: .04em; }
+.lsc-bullets { margin: 0; padding-left: 20px; }

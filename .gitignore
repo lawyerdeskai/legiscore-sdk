@@ -1,0 +1,27 @@
+# Build output
+node/dist/
+node/node_modules/
+views/dist/
+views/node_modules/
+views/dist/
+views/node_modules/
+python/build/
+python/dist/
+python/*.egg-info/
+**/__pycache__/
+*.pyc
+
+# Internal engineering notes. NEVER commit these: they name backend internals and
+# unshipped fixes, which is exactly what a public SDK repo must not carry.
+internal/
+
+# Local noise
+.DS_Store
+.venv/
+*.pdf
+
+# Scratch renders of the partner pack. The sources live in integrations/.
+integrations/*.html
+
+# Claude Code agent worktrees
+.claude/

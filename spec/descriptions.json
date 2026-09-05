@@ -1,0 +1,227 @@
+{
+  "_readme": [
+    "Curated partner-facing text for the published spec. build_spec.py drops every",
+    "description the upstream API description carries and applies these instead, so an",
+    "operation or field is either described here or has no description at all.",
+    "",
+    "Rules for anything added here: say what the caller sends and what comes back, name",
+    "no infrastructure, no table, no queue, no internal function, no permission string,",
+    "and no defect. One short paragraph is the target length.",
+    "",
+    "operations  keyed by operationId       -> {summary, description}",
+    "properties  keyed by Schema.property   -> string (also accepts a bare Schema name)",
+    "parameters  keyed by operationId.name  -> string"
+  ],
+
+  "operations": {
+    "presignUpload": {
+      "summary": "Presign an upload",
+      "description": "Ask for a short-lived signed URL to upload one file straight to object storage. Send the file name, its byte size and its content type; you get back the URL to PUT the bytes to and an objectName to pass to completeUpload once the PUT returns 200. The content type must be one we accept and the size must be within the per-file limit, both of which are checked here rather than on the PUT."
+    },
+    "completeUpload": {
+      "summary": "Complete an upload",
+      "description": "Confirm that the PUT finished and register the file, using the objectName that presignUpload returned. Returns the document_id you pass to createCase. Call it only after the PUT has returned 200; calling it early is rejected. An Idempotency-Key header is honoured, so a retried call after a lost response returns the first result instead of registering the file twice."
+    },
+    "getCredits": {
+      "summary": "Get your credit balance",
+      "description": "Return the credit balances your key can draw on, and which one a new case would be charged to by default. The key itself determines the organisation; there is no account or tenant identifier to pass."
+    },
+    "listScenarios": {
+      "summary": "List scenarios",
+      "description": "List the diligence scenarios your key may run, optionally filtered by category or state. A scenario is the template a case runs against: it decides which searches run, which fields are extracted and which template the report uses. Scenarios published for everyone and scenarios configured for your organisation both appear."
+    },
+    "listCustomFieldConfigs": {
+      "summary": "List custom field configurations",
+      "description": "List the custom field schemas your key may attach to a new case through custom_field_schema_ids. The set is resolved from your key: your own, your organisation's, and any published for general use."
+    },
+
+    "createCase": {
+      "summary": "Create a case",
+      "description": "Open a new case over documents you have already uploaded. Requires documentIds and a propertyFocus object describing the property; every other field has a default resolved from your key. Each document id is checked to be yours before anything is charged. Returns the case_id you use for every later call. Supply an Idempotency-Key header and a repeat of the same request returns the first response rather than opening and charging a second case; the same key with a different body is rejected."
+    },
+    "getCaseStatus": {
+      "summary": "Get case status",
+      "description": "Poll a case. Returns a stable public state (queued, running, awaiting_review, completed, failed), a progress figure, a human-readable message and your own metadata echoed back. Built to be called often; every ten seconds is a sensible floor."
+    },
+    "getCaseResult": {
+      "summary": "Get the final report",
+      "description": "Return the completed report and property score for a case. While the case is still running this returns 409 with the current state rather than a partial report, so poll getCaseStatus and call this once the state is completed."
+    },
+    "listCaseFiles": {
+      "summary": "List case files",
+      "description": "Inventory every file a case produced: the documents you uploaded, anything added during a review pause, the search artefacts and the report itself. Each entry carries a short-lived signed download URL, so fetch what you need soon after listing rather than storing the URLs."
+    },
+    "downloadCaseFilesZip": {
+      "summary": "Download all case files as a ZIP",
+      "description": "Stream every file on the case as a single ZIP, foldered by kind, optionally narrowed with the kinds filter. The response is binary, not JSON. Very large archives are refused rather than truncated."
+    },
+    "getMissingDocuments": {
+      "summary": "Read the missing-documents pause",
+      "description": "Read the documents a case is waiting for. Valid only while the case is paused at the missing-documents checkpoint; asking at any other time returns 400 rather than an empty list, so dispatch on internal_status from getCaseStatus first."
+    },
+    "continueCase": {
+      "summary": "Answer the missing-documents pause",
+      "description": "Resume a case paused for missing documents, either by supplying new document ids or by setting proceed_anyway so the report is produced and records the gap. Answering one pause can surface the next, so poll the status again afterwards rather than assuming the case is finished."
+    },
+    "linkDocumentsToMissingSlot": {
+      "summary": "Link documents to a missing-documents slot",
+      "description": "Attach documents you have uploaded to one specific slot in the missing-documents list, so the case shows which requested document each upload satisfies. Optional: continueCase accepts the same document ids without slot detail. This one endpoint needs an extra permission on your key; a 403 here means asking us to grant it, not a bad request."
+    },
+    "getDocumentReview": {
+      "summary": "Read the document-analysis pause",
+      "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint."
+    },
+    "submitDocumentReview": {
+      "summary": "Answer the document-analysis pause",
+      "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one."
+    },
+    "getAcknowledgements": {
+      "summary": "Read the risk-acknowledgement pause",
+      "description": "Read the title risks a case has raised, together with any decisions already recorded. Valid only while the case is paused at the acknowledgement checkpoint."
+    },
+    "submitAcknowledgements": {
+      "summary": "Answer the risk-acknowledgement pause",
+      "description": "Record a decision against each risk and release the case for final report generation. This writes a legal acceptance record attributed to whoever's key made the call, so it should carry a person's decision rather than a default set in code. Send each item back whole with a decision added; dropping fields off the generated item loses information the report needs."
+    },
+    "getCaseDocuments": {
+      "summary": "Download a case document",
+      "description": "Download the report for a case in the requested format. Ownership is enforced against your key: another organisation's case is reported as not found rather than as forbidden."
+    },
+
+    "submitRawSearch": {
+      "summary": "Submit a raw search",
+      "description": "Queue one search against one state portal and return a job id immediately. Takes the state slug, the search type slug and the parameters that search needs; use getSearchCatalog to discover which parameters a given state and search type accept. Poll getRawSearchStatus for the outcome."
+    },
+    "getRawSearchStatus": {
+      "summary": "Get raw search status",
+      "description": "Poll a raw search job. Returns its state and, once finished, the extracted result plus freshly signed URLs for any documents the portal returned."
+    },
+    "listRawSearches": {
+      "summary": "List raw searches",
+      "description": "List your recent raw searches, newest first, with optional filters on state, search type and status. Set include_extras to also get the parameters each search ran with and a summary of its result."
+    },
+    "listSearchStates": {
+      "summary": "List searchable states",
+      "description": "List the states raw search currently covers, as the slugs the other search calls expect."
+    },
+    "getSearchCatalog": {
+      "summary": "Get the search catalog",
+      "description": "Return the full catalog of searches: every state, the search types available in it, and the input schema each one accepts. This is the reference you build a search form or a parameter mapping from."
+    },
+    "listLookupDimensions": {
+      "summary": "List lookup dimensions",
+      "description": "List the (state, dimension) pairs that have a lookup table behind them, for example districts or sub-registrar offices. Use it to discover what getLookupValues can be asked for."
+    },
+    "getLookupValues": {
+      "summary": "Get lookup values",
+      "description": "Return the valid values for one lookup dimension in one state, so a search parameter can be picked from a list instead of typed."
+    },
+
+    "submitTranslation": {
+      "summary": "Submit a document for translation",
+      "description": "Upload a PDF for asynchronous translation and return a session id. Credits are deducted per page at submission. Poll getTranslationStatus, then downloadTranslation once it reports complete."
+    },
+    "getTranslationStatus": {
+      "summary": "Get translation status",
+      "description": "Poll a translation session. Returns pages completed against pages total, the session state and any error message."
+    },
+    "downloadTranslation": {
+      "summary": "Download a translation",
+      "description": "Return a short-lived signed URL for the translated document. Fetch it promptly rather than storing the URL."
+    },
+    "listTranslations": {
+      "summary": "List translations",
+      "description": "List your translation sessions, newest first, with limit and offset paging."
+    },
+    "translateDocx": {
+      "summary": "Translate a DOCX",
+      "description": "Translate a DOCX file and return the translated DOCX directly in the response. Synchronous, for documents small enough to wait on; use submitTranslation for anything larger."
+    },
+    "listTranslationLanguages": {
+      "summary": "List translation languages",
+      "description": "List the language codes translation accepts as a target."
+    },
+
+    "listWebhooks": {
+      "summary": "List webhooks",
+      "description": "List the delivery endpoints registered against your key, with their events and whether each is active. Secrets are never returned here."
+    },
+    "createWebhook": {
+      "summary": "Create a webhook",
+      "description": "Register a delivery endpoint and the events it should receive. The signing secret is returned exactly once, in this response, and can never be read back: store it as you receive it. Deliveries are signed with it, and your handler should verify every one."
+    },
+    "updateWebhook": {
+      "summary": "Update a webhook",
+      "description": "Change the name, URL, event list, custom headers or active flag of one of your webhooks. Fields you omit are left as they are. Changing the URL does not change the signing secret."
+    },
+    "deleteWebhook": {
+      "summary": "Delete a webhook",
+      "description": "Remove one of your webhooks. Deliveries stop immediately and the signing secret is gone with it."
+    },
+    "rotateWebhookSecret": {
+      "summary": "Rotate a webhook secret",
+      "description": "Issue a new signing secret for one of your webhooks. The new secret is returned exactly once and the old one stops verifying at once, so deploy the new secret to your handler in the same change."
+    },
+
+    "createPropertyExtraction": {
+      "summary": "Create a property extraction job",
+      "description": "Upload one or more documents and get back a job id for asynchronous extraction of the property details they describe. Poll getPropertyExtraction for the result. Optionally pass a search schema so the result also carries values shaped ready to feed into a raw search."
+    },
+    "getPropertyExtraction": {
+      "summary": "Get a property extraction job",
+      "description": "Poll a property extraction job. Returns its current state, the extracted result once it is done, or the error if it failed."
+    }
+  },
+
+  "properties": {
+    "CaseStatusResponse.internal_status": "A finer-grained status behind the public state. When state is awaiting_review, this is what tells you which pause the case is at, so you can call the matching read endpoint: awaiting_document_review, awaiting_documents or awaiting_acknowledgements. Treat any value you do not recognise as 'keep waiting'.",
+
+    "SubmitAcknowledgementsRequest.acknowledgements": "One entry per risk returned by getAcknowledgements. Send each generated item back whole, with a decision of 'accepted', 'rejected' or 'undecided' added, and a bypass_reason recording why. An item sent without a decision acknowledges nothing, so a case can look answered when nothing was decided. Do not set is_bypassed yourself: it is derived from decision, and sending both is rejected when they disagree.",
+
+    "CreateCaseRequest.credit_source_org_id": "Optional. Charge this case to a specific organisation's credit pool instead of the default your key resolves to. The server validates that your key is entitled to that pool; omit it and the right pool is chosen for you.",
+    "CreateCaseRequest.credit_source_branch_id": "Optional. Charge this case to a specific branch's credit pool. The server validates the branch against your key; omit it and the right pool is chosen for you.",
+    "CreateCaseRequest.vault_property_id": "Optional. Attach the case to a property record you already hold with us. The server validates that the record belongs to your key's organisation.",
+    "CreateCaseRequest.project_id": "Optional. File the case under one of your projects. The server validates the project against your key's organisation.",
+    "CreateCaseRequest.template_id": "Optional. Render the report with a specific document template. The server validates the template against your key's organisation; omit it and the scenario's template is used.",
+    "CreateCaseRequest.metadata": "Your own correlation blob. Stored verbatim and echoed back on status, result and every webhook. Put your reference ids here rather than trying to encode them in other fields.",
+    "CreateCaseRequest.documentIds": "Document ids from completeUpload. Always an array, even for one document. Each is checked to belong to your key before anything is charged.",
+    "CreateCaseRequest.propertyFocus": "The property the case is about. An object, not a string: at minimum a property type, the state and a free-form property_details bag holding survey number, village, district, house number and anything else the state's portals need.",
+
+    "UnifiedRawSearchRequest.credit_source_org_id": "Optional. Charge this search to a specific organisation's credit pool. The server validates that your key is entitled to that pool; omit it and the right pool is chosen for you.",
+    "UnifiedRawSearchRequest.credit_source_branch_id": "Optional. Charge this search to a specific branch's credit pool. The server validates the branch against your key; omit it and the right pool is chosen for you.",
+    "UnifiedRawSearchRequest.state": "State slug, for example 'andhra'. Must be one of the slugs listSearchStates returns.",
+    "UnifiedRawSearchRequest.search_type": "Search type slug, for example 'ec' or 'index2'. Must be one the catalog lists for that state.",
+    "UnifiedRawSearchRequest.params": "The parameters this state and search type require, validated against the input schema the catalog publishes for that pair.",
+    "UnifiedRawSearchRequest.param_labels": "Optional display text for each parameter key, so a saved search can be shown back with names rather than codes.",
+    "UnifiedRawSearchRequest.force": "Re-run the search rather than reusing a recent identical one. A forced run is charged again.",
+
+    "Body_submit_translation_api_v1_translate_submit_post.user_id": "The user this translation is filed under. Required by the endpoint and validated against your key: a value outside your key's organisation is rejected.",
+    "Body_submit_translation_api_v1_translate_submit_post.credit_source_org_id": "Optional. Charge this translation to a specific organisation's credit pool. The server validates that your key is entitled to that pool.",
+    "Body_submit_translation_api_v1_translate_submit_post.credit_source_branch_id": "Optional. Charge this translation to a specific branch's credit pool. The server validates the branch against your key.",
+    "Body_submit_translation_api_v1_translate_submit_post.total_pages": "Page count of the PDF. Credits are charged per page.",
+
+    "Body_translate_docx_api_v1_docx_translate_post.file": "The DOCX file to translate.",
+    "Body_translate_docx_api_v1_docx_translate_post.target_lang": "Target language code, for example 'hi' or 'te'.",
+    "Body_translate_docx_api_v1_docx_translate_post.backend": "Which translation engine to use. Leave it on 'auto' unless we have told you otherwise for your account.",
+
+    "CompleteUploadRequest.objectName": "The objectName presignUpload returned for this file. It identifies the upload; do not construct one yourself.",
+    "PresignUploadRequest.contentType": "The exact content type you will send on the PUT. It must match, and it must be one of the types we accept.",
+
+    "WebhookCreateRequest.url": "Your HTTPS endpoint. We call it; it is never sent on any other request.",
+    "WebhookCreateRequest.events": "The events this endpoint should receive.",
+    "WebhookCreateRequest.custom_headers": "Optional extra headers to send with each delivery, for example a routing header your gateway needs."
+  },
+
+  "parameters": {
+    "listCaseFiles.kinds": "Optional comma-separated filter over uploaded, added_during_review, search_artifact and report_json. Omit it for everything.",
+    "downloadCaseFilesZip.kinds": "Optional comma-separated filter over uploaded, added_during_review, search_artifact and report_json. Omit it for everything.",
+    "getCaseDocuments.format": "The format to return the report in.",
+    "listScenarios.category": "Optional. Narrow the list to one scenario category.",
+    "listScenarios.state_id": "Optional. Narrow the list to scenarios for one state, plus the ones that apply everywhere.",
+    "listRawSearches.include_extras": "Set true to also get the parameters each search ran with and a summary of its result. Off by default, which keeps the list small.",
+    "listRawSearches.limit": "Page size.",
+    "listRawSearches.offset": "Page offset.",
+    "listTranslations.limit": "Page size.",
+    "listTranslations.offset": "Page offset."
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@legiscore/views",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drop-in React views for the LegiScore report lifecycle — status, the three review pauses, and the finished report.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": ["dist/src", "src/styles.css"],
+  "exports": {
+    ".": { "types": "./dist/src/index.d.ts", "default": "./dist/src/index.js" },
+    "./styles.css": "./src/styles.css"
+  },
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js"
+  },
+  "peerDependencies": { "react": ">=18" },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0"
+  }
+}

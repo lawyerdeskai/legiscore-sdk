@@ -1,0 +1,93 @@
+name: Release
+
+# Publishes both packages from one tag, so their versions can never drift apart.
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Uses Trusted Publishing (OIDC) on both registries. There are no registry tokens
+# in this repo's secrets, and there should never be: a long-lived token is the
+# thing that gets stolen and used to publish a backdoored version in our name.
+#
+# Every third-party action is pinned to a commit SHA. A tag can be moved; a SHA
+# cannot, so a compromised action release cannot reach a job that publishes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Tag must match both package versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          py=$(grep -m1 '^version = ' python/pyproject.toml | cut -d'"' -f2)
+          nd=$(node -p "require('./node/package.json').version")
+          echo "tag=$tag python=$py node=$nd"
+          [ "$tag" = "$py" ] && [ "$tag" = "$nd" ] || {
+            echo "::error::Tag and package versions disagree. Publication is not reversible; fix the versions first."
+            exit 1
+          }
+
+  # Everything CI checks, re-run against the exact tagged commit. A release must not
+  # be able to skip the leak scan or the package-content inspection.
+  verify:
+    uses: ./.github/workflows/ci.yml
+    needs: guard
+
+  pypi:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    # Job-level permissions REPLACE the workflow-level block, so contents: read has to
+    # be restated here or the checkout below has no read scope.
+    permissions:
+      contents: read
+      id-token: write        # OIDC, in place of a PyPI API token
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.12" }
+      - name: Build sdist and wheel from a clean checkout
+        working-directory: python
+        run: |
+          pip install build
+          python -m build          # writes both dist/*.tar.gz and dist/*.whl
+          ls -l dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: python/dist
+
+  npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write        # OIDC, and provenance attestation
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - name: npm >= 11.5.1, which is the floor for OIDC
+        # setup-node ships whatever npm came with the Node release, which can be older
+        # than trusted publishing needs. Without this the publish fails on auth, not on
+        # anything that names the real problem.
+        run: npm install -g npm@latest
+      - name: Build from a clean checkout
+        working-directory: node
+        run: |
+          npm ci
+          npm run build
+      - name: Publish
+        working-directory: node
+        # Trusted publishing attaches provenance on its own; passing the flag makes the
+        # intent visible in the log and fails loudly if OIDC did not come through.
+        run: npm publish --provenance --access public
