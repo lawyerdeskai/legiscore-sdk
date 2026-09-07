@@ -86,7 +86,23 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Skip a version that is already on the registry
+        id: registry
+        working-directory: node
+        # The first release of a package is published by hand, because npm attaches a
+        # trusted publisher only to a package that already exists. The tag that follows
+        # must not fail on the version that manual publish already shipped.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view "@legiscore/sdk@$VERSION" version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ]; then
+            echo "@legiscore/sdk@$VERSION is already on npm; nothing to publish."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish
+        if: steps.registry.outputs.published == 'false'
         working-directory: node
         # Trusted publishing attaches provenance on its own; passing the flag makes the
         # intent visible in the log and fails loudly if OIDC did not come through.
