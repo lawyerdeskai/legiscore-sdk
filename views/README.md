@@ -4,9 +4,9 @@ Drop-in React screens for the LegiScore report lifecycle: status, the three revi
 the finished report. They are the same flows the LegiScore product runs, unstyled enough to
 look like yours.
 
-```bash
-npm install @legiscore/views   # peer: react >= 18
-```
+This package is `private: true` and is not published to npm. The screens ship as source in
+this repository, under `views/src`: copy them into a React 18+ app of your own, alongside
+`@legiscore/sdk` as the API client.
 
 Dropping it into a Next.js 15 App Router page:
 

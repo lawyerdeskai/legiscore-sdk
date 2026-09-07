@@ -139,10 +139,6 @@ The per-endpoint method surface is generated from `spec/legiscore-openapi.json`,
 Every description in that spec is written by hand in `spec/descriptions.json` and reapplied on every
 build; transport, retries, errors and the multi-step helpers are hand-written too.
 
-## What is still open
-
-`TODO.md` carries the open items and says whose decision each one is.
-
 ## Security
 
 The SDK is a convenience layer, never a security boundary. It holds no secrets: your API key comes
