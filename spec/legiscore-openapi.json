@@ -3,7 +3,7 @@
   "info": {
     "title": "LegiScore Partner API",
     "version": "1.0.0",
-    "description": "Programmatic access to LegiScore title search and legal opinion reports.\n\nAuthentication: send your `lsk_` key as `X-API-Key` (or `Authorization: Bearer lsk_...`).\nRate limits are per key. Exceeding one returns 429 with a `Retry-After` header.\n\nTypical flow: presign + upload documents, POST /api/requests to create the case, then either poll `/api/cases/{case_id}/status` or receive a webhook. A case can pause for missing documents, document review, or risk acknowledgements; each pause has a matching resume endpoint."
+    "description": "Programmatic access to LegiScore legal opinion reports and government record searches.\n\nAuthentication: send your `lsk_` key as `X-API-Key` (or `Authorization: Bearer lsk_...`).\nRate limits are per key. Exceeding one returns 429 with a `Retry-After` header.\n\nReports: presign + upload documents, POST /api/requests to create the case, then either poll `/api/cases/{case_id}/status` or receive a webhook. A case can pause for missing documents, document review, or risk acknowledgements; each pause has a matching resume endpoint.\n\nSearch is a separate product: its own credit balance, its own host (named as a `servers` entry on each search path), and a flat per-search price that the catalog endpoint states. Submit a search, then poll it until its status is `succeeded`, `failed` or `cancelled`."
   },
   "servers": [
     {
@@ -27,7 +27,7 @@
     },
     {
       "name": "search",
-      "description": "Raw search across the state land-record portals."
+      "description": "Run a government record search and collect what the portal returns. Its own credit balance, and its own host."
     },
     {
       "name": "translate",
@@ -1088,22 +1088,64 @@
         "description": "Poll a property extraction job. Returns its current state, the extracted result once it is done, or the error if it failed."
       }
     },
-    "/api/v1/raw-search/catalog": {
-      "get": {
+    "/api/v1/search": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitSearchResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Payment Required"
+          }
+        },
+        "operationId": "submitSearch",
         "tags": [
           "search"
         ],
-        "operationId": "getSearchCatalog",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
         "security": [
           {
             "ApiKeyHeader": []
@@ -1112,16 +1154,10 @@
             "BearerToken": []
           }
         ],
-        "summary": "Get the search catalog",
-        "description": "Return the full catalog of searches: every state, the search types available in it, and the input schema each one accepts. This is the reference you build a search form or a parameter mapping from."
-      }
-    },
-    "/api/v1/raw-search/history": {
+        "summary": "Submit a search",
+        "description": "Run one government record search, or up to 25 in one call. Send state, search_type and the params that pair needs, or a searches array of the same fields with an optional label per item. Returns 202 with the accepted searches, each carrying the id you poll, plus rejected for any item that failed validation, credits_charged for the run and a batch_id when more than one search was accepted. A batch runs the items that validated rather than failing as a whole. Search credits are a separate balance from the report credits getCredits returns: they are priced flat per search at the rate getSearchCatalog states, charged when a search is accepted, and returned if the source cannot be reached. Too few of them returns 402 with the code insufficient_credits. An identical search already run on your account within the last 24 hours is answered from that result instead of the source, and replayed counts how many were."
+      },
       "get": {
-        "tags": [
-          "search"
-        ],
-        "operationId": "listRawSearches",
         "parameters": [
           {
             "name": "limit",
@@ -1129,9 +1165,9 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 100,
               "minimum": 1,
-              "default": 20,
+              "maximum": 200,
+              "default": 50,
               "title": "Limit"
             },
             "description": "Page size."
@@ -1149,85 +1185,66 @@
             "description": "Page offset."
           },
           {
-            "name": "state",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "State"
-            }
-          },
-          {
-            "name": "search_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search Type"
-            }
-          },
-          {
             "name": "status",
             "in": "query",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/SearchStatus"
                 },
                 {
                   "type": "null"
                 }
               ],
               "title": "Status"
-            }
+            },
+            "description": "Optional. Narrow the list to one status."
           },
           {
-            "name": "include_extras",
+            "name": "batch_id",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Include Extras"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
             },
-            "description": "Set true to also get the parameters each search ran with and a summary of its result. Off by default, which keeps the list small."
+            "description": "Optional. Narrow the list to the searches one submitSearch call started."
           }
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SearchListResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
           }
         },
+        "operationId": "listSearches",
+        "tags": [
+          "search"
+        ],
         "security": [
           {
             "ApiKeyHeader": []
@@ -1236,44 +1253,73 @@
             "BearerToken": []
           }
         ],
-        "summary": "List raw searches",
-        "description": "List your recent raw searches, newest first, with optional filters on state, search type and status. Set include_extras to also get the parameters each search ran with and a summary of its result."
-      }
+        "summary": "List your searches",
+        "description": "List the searches on your account, newest first, with limit and offset paging and optional filters on status and batch_id. Each entry is the same shape getSearch returns, and anything still in flight is refreshed on the way past, so listing doubles as polling. Returns the page plus the total count."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
     },
-    "/api/v1/raw-search/lookups": {
-      "get": {
-        "tags": [
-          "search"
-        ],
-        "operationId": "listLookupDimensions",
+    "/api/v1/search/assist": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchAssistForm"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAssistResponse"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Payment Required"
           }
         },
-        "security": [
-          {
-            "ApiKeyHeader": []
-          },
-          {
-            "BearerToken": []
-          }
-        ],
-        "summary": "List lookup dimensions",
-        "description": "List the (state, dimension) pairs that have a lookup table behind them, for example districts or sub-registrar offices. Use it to discover what getLookupValues can be asked for."
-      }
-    },
-    "/api/v1/raw-search/lookups/{state}/{dimension}": {
-      "get": {
+        "operationId": "assistSearch",
         "tags": [
           "search"
         ],
-        "operationId": "getLookupValues",
         "security": [
           {
             "ApiKeyHeader": []
@@ -1282,66 +1328,52 @@
             "BearerToken": []
           }
         ],
+        "summary": "Propose search parameters from a document",
+        "description": "Read a document and propose the parameters for a search, without running one. Send multipart/form-data with a file (PDF, PNG, JPEG or WebP, under 20 MB) or a text field, plus the state. Returns the extracted fields, each with a confidence, and needs_review when any of them is low. It deliberately never submits: a wrong survey number does not fail loudly, it searches a different property and returns a confident, wrong result, so a person confirms first. Priced separately at the rate getSearchCatalog states, and a document nothing could be read from costs nothing."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
+    },
+    "/api/v1/search/catalog": {
+      "get": {
         "parameters": [
           {
             "name": "state",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "State"
-            }
-          },
-          {
-            "name": "dimension",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Dimension"
-            }
+            },
+            "description": "Optional. Narrow the catalog to one state."
           }
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SearchCatalogResponse"
                 }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get lookup values",
-        "description": "Return the valid values for one lookup dimension in one state, so a search parameter can be picked from a list instead of typed."
-      }
-    },
-    "/api/v1/raw-search/states": {
-      "get": {
-        "tags": [
-          "search"
-        ],
-        "operationId": "listSearchStates",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             },
             "description": "Successful Response"
           }
         },
+        "operationId": "getSearchCatalog",
+        "tags": [
+          "search"
+        ],
         "security": [
           {
             "ApiKeyHeader": []
@@ -1350,47 +1382,58 @@
             "BearerToken": []
           }
         ],
-        "summary": "List searchable states",
-        "description": "List the states raw search currently covers, as the slugs the other search calls expect."
-      }
+        "summary": "Get the search catalog",
+        "description": "Return everything that can be searched: the states that are live, every search type within them, the fields each one takes and which are required, what a result yields, how long it usually takes and the current price per search. It also reports whether the government source is reachable right now. This call needs no key, so it is the reference you build a search form or a parameter mapping from before you have one."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
     },
-    "/api/v1/raw-search/status/{job_id}": {
+    "/api/v1/search/credits": {
       "get": {
-        "tags": [
-          "search"
-        ],
-        "operationId": "getRawSearchStatus",
         "parameters": [
           {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
+            "name": "limit",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "How many ledger movements to return with the balance."
           }
         ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SearchCreditsResponse"
+                }
               }
             },
             "description": "Successful Response"
           },
-          "422": {
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SearchErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unauthorized"
           }
         },
+        "operationId": "getSearchCredits",
+        "tags": [
+          "search"
+        ],
         "security": [
           {
             "ApiKeyHeader": []
@@ -1399,46 +1442,462 @@
             "BearerToken": []
           }
         ],
-        "summary": "Get raw search status",
-        "description": "Poll a raw search job. Returns its state and, once finished, the extracted result plus freshly signed URLs for any documents the portal returned."
-      }
+        "summary": "Get your search credit balance",
+        "description": "Return your search credit balance, how much of it is currently spendable, whether it is personal or your organisation's, the current prices and the most recent movements against it. This balance is separate from the report credits getCredits returns, so a run of searches can never spend the credits bought to produce legal opinion reports."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
     },
-    "/api/v1/raw-search/submit": {
-      "post": {
+    "/api/v1/search/lookups": {
+      "get": {
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "andhra",
+              "title": "State"
+            },
+            "description": "Which state's lookups to read."
+          },
+          {
+            "name": "dim",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dim"
+            },
+            "description": "The dimension to resolve, as getSearchCatalog names it on the field: district, mandal, village, sro and the rest."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            },
+            "description": "Optional. Narrow the options by name."
+          },
+          {
+            "name": "district",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "District"
+            },
+            "description": "The district already chosen. Required for any dimension nested under one."
+          },
+          {
+            "name": "mandal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mandal"
+            },
+            "description": "The mandal already chosen. Required for any dimension nested under one."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 500,
+              "title": "Limit"
+            },
+            "description": "How many options to return."
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchLookupsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "operationId": "getSearchLookups",
         "tags": [
           "search"
         ],
-        "operationId": "submitRawSearch",
+        "security": [
+          {
+            "ApiKeyHeader": []
+          },
+          {
+            "BearerToken": []
+          }
+        ],
+        "summary": "Resolve a lookup to its codes",
+        "description": "Resolve names to the codes a search parameter needs, one dimension at a time: districts, mandals, villages, sub-registrar offices and the rest. Pass dim, plus the district or mandal already chosen where the dimension is nested, and q to narrow by name. Returns the matching options, each with the codes to send in params. getSearchCatalog names the dimension every lookup field uses."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
+    },
+    "/api/v1/search/{search_id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Id"
+            },
+            "description": "The id submitSearch returned for this search."
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "operationId": "getSearch",
+        "tags": [
+          "search"
+        ],
+        "security": [
+          {
+            "ApiKeyHeader": []
+          },
+          {
+            "BearerToken": []
+          }
+        ],
+        "summary": "Get one search",
+        "description": "Poll one search. Returns its status (queued, running, awaiting_otp, succeeded, failed or cancelled), a progress figure, and once it settles the found verdict, the extracted records and the documents the source issued. A succeeded search with found false means the source was reached and had nothing on record against the property, which is a result rather than a failure. credits_charged and refunded say what this search actually cost."
+      },
+      "delete": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Id"
+            },
+            "description": "The id submitSearch returned for this search."
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "operationId": "cancelSearch",
+        "tags": [
+          "search"
+        ],
+        "security": [
+          {
+            "ApiKeyHeader": []
+          },
+          {
+            "BearerToken": []
+          }
+        ],
+        "summary": "Cancel a search",
+        "description": "Ask a search that is still in flight to stop. Returns the search as it stands, with cancelling true; the settled status arrives on a later poll, and the credits are returned if it never completed. A search that has already succeeded, failed or been cancelled returns 409 rather than being cancelled twice."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
+    },
+    "/api/v1/search/{search_id}/documents/{filename}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Id"
+            },
+            "description": "The id of the search that produced the file."
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            },
+            "description": "The filename exactly as getSearch reports it under documents. Anything else is not found."
+          }
+        ],
+        "responses": {
+          "302": {
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            },
+            "description": "Found"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "operationId": "getSearchDocument",
+        "tags": [
+          "search"
+        ],
+        "security": [
+          {
+            "ApiKeyHeader": []
+          },
+          {
+            "BearerToken": []
+          }
+        ],
+        "summary": "Download a document from a search",
+        "description": "Download one of the files a search produced, named by the filename getSearch reports under documents. The API answers with a redirect to a signed URL that expires in an hour; the SDK follows it for you on a connection that carries no API key, and hands you the bytes. The response is binary, not JSON. The file is looked up in the search's own document list rather than from the path, so a filename that is not on this search is reported as not found, and one that belongs to another account is reported the same way."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
+    },
+    "/api/v1/search/{search_id}/otp": {
+      "post": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Id"
+            },
+            "description": "The id of the search whose status is awaiting_otp."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UnifiedRawSearchRequest"
+                "$ref": "#/components/schemas/SubmitSearchOtpRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SearchOtpResponse"
+                }
               }
             },
             "description": "Successful Response"
           },
-          "422": {
+          "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SearchErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
+        "operationId": "submitSearchOtp",
+        "tags": [
+          "search"
+        ],
         "security": [
           {
             "ApiKeyHeader": []
@@ -1447,9 +1906,121 @@
             "BearerToken": []
           }
         ],
-        "summary": "Submit a raw search",
-        "description": "Queue one search against one state portal and return a job id immediately. Takes the state slug, the search type slug and the parameters that search needs; use getSearchCatalog to discover which parameters a given state and search type accept. Poll getRawSearchStatus for the outcome."
-      }
+        "summary": "Supply a one-time password",
+        "description": "Hand a one-time password to a search whose status is awaiting_otp, as 4 to 8 digits in otp. Returns accepted true once it has been passed on. A search in any other status returns 409. Most searches never reach this state; it exists for the case where the source sends its code to a number you hold."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
+    },
+    "/api/v1/search/{search_id}/recover": {
+      "post": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Id"
+            },
+            "description": "The id of a search that has already succeeded or failed."
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoverSearchResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoverSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "operationId": "recoverSearch",
+        "tags": [
+          "search"
+        ],
+        "security": [
+          {
+            "ApiKeyHeader": []
+          },
+          {
+            "BearerToken": []
+          }
+        ],
+        "summary": "Recover an incomplete search",
+        "description": "Re-run a finished search against related identifiers, for when the first attempt came back with less than expected. Takes no body: it reads what did come back and works out what else is worth asking. Returns 202 with the additional searches it started and the reasoning behind them. Priced separately from a plain search, at the rate getSearchCatalog states, and nothing is charged when the source is unreachable or when the analysis finds nothing defensible to try. Only a search that has succeeded or failed can be recovered, and a recovery run cannot itself be recovered."
+      },
+      "servers": [
+        {
+          "url": "https://legiscore.in"
+        }
+      ]
     },
     "/api/v1/translate/download/{session_id}": {
       "get": {
@@ -2166,6 +2737,32 @@
         ],
         "title": "Body_translate_docx_api_v1_docx_translate_post"
       },
+      "CancelSearchResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "search",
+              "cancelling"
+            ],
+            "properties": {
+              "search": {
+                "$ref": "#/components/schemas/Search"
+              },
+              "cancelling": {
+                "type": "boolean",
+                "title": "Cancelling"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Cancel Search Response"
+      },
       "CaseResultResponse": {
         "properties": {
           "case_id": {
@@ -2807,6 +3404,1089 @@
         ],
         "title": "PublicCaseState"
       },
+      "RecoverSearchResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "recovered",
+              "credits_charged"
+            ],
+            "properties": {
+              "recovered": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Search"
+                },
+                "title": "Recovered"
+              },
+              "reasoning": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reasoning"
+              },
+              "rationales": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Rationales"
+              },
+              "credits_charged": {
+                "type": "number",
+                "title": "Credits Charged"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Message"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Recover Search Response"
+      },
+      "RejectedSearch": {
+        "type": "object",
+        "required": [
+          "index",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "title": "Rejected Search"
+      },
+      "ReplayCounts": {
+        "type": "object",
+        "required": [
+          "free",
+          "billed"
+        ],
+        "properties": {
+          "free": {
+            "type": "integer",
+            "title": "Free"
+          },
+          "billed": {
+            "type": "integer",
+            "title": "Billed"
+          }
+        },
+        "title": "Replay Counts"
+      },
+      "Search": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "search_type",
+          "status",
+          "credits_charged"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The id to poll and to quote to us. Stable for the life of the search."
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "search_type": {
+            "type": "string",
+            "title": "Search Type"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SearchStatus",
+            "description": "queued and running mean keep polling. awaiting_otp means the source asked for a one-time password; see submitSearchOtp. succeeded, failed and cancelled are settled and will not change."
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress",
+            "description": "How far along the search is, from 0 to 1. Indicative only; poll status for the decision."
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "found": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Found",
+            "description": "Null until the search settles. False on a succeeded search means the source was reached and holds nothing against this property, which is an answer rather than a failure."
+          },
+          "records": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Records",
+            "description": "The rows the source returned, in the shape that source publishes them. Null until the search settles."
+          },
+          "record_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Count"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchDocument"
+            },
+            "title": "Documents",
+            "description": "The files the source issued, by name, type and size. Pass a filename to getSearchDocument to fetch the bytes."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchFailure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Why a failed search failed. Null on every other status."
+          },
+          "credits_charged": {
+            "type": "number",
+            "title": "Credits Charged",
+            "description": "What this search actually cost. Zero on a search answered from an identical recent run of your own."
+          },
+          "refunded": {
+            "type": "boolean",
+            "title": "Refunded",
+            "description": "True when the charge has been returned, which happens when the source could not be reached or the search was cancelled before it completed."
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true,
+            "title": "Params"
+          },
+          "replayed": {
+            "type": "boolean",
+            "title": "Replayed",
+            "description": "True when an identical search run on your account in the last 24 hours answered this one instead of the source. A property of this response, not of the search: the same search read back later reports false."
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "recovery_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Of",
+            "description": "The id of the search this one was started from by recoverSearch, or null for a search you submitted yourself."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "api"
+            ],
+            "title": "Source",
+            "description": "Whether this search was submitted through the API or run from the dashboard. Both spend the same credits."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "title": "Search",
+        "description": "One search and everything known about it so far. The same shape comes back from submitSearch, getSearch and listSearches."
+      },
+      "SearchAssistExtraction": {
+        "type": "object",
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchAssistField"
+            },
+            "title": "Fields"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "search_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Type"
+          }
+        },
+        "title": "Search Assist Extraction"
+      },
+      "SearchAssistField": {
+        "type": "object",
+        "required": [
+          "name",
+          "value",
+          "confidence"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "value": {
+            "title": "Value"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "title": "Confidence"
+          }
+        },
+        "title": "Search Assist Field"
+      },
+      "SearchAssistForm": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "The document to read: PDF, PNG, JPEG or WebP, under 20 MB. Send this or text."
+          },
+          "state": {
+            "type": "string",
+            "default": "andhra",
+            "title": "State",
+            "description": "Which state's fields to propose values for."
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Document text, if you have already extracted it. An alternative to file, not an addition."
+          }
+        },
+        "title": "Search Assist Form"
+      },
+      "SearchAssistResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "extraction",
+              "credits_charged"
+            ],
+            "properties": {
+              "extraction": {
+                "$ref": "#/components/schemas/SearchAssistExtraction"
+              },
+              "needs_review": {
+                "type": "boolean",
+                "title": "Needs Review"
+              },
+              "credits_charged": {
+                "type": "number",
+                "title": "Credits Charged"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Message"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Search Assist Response"
+      },
+      "SearchCatalog": {
+        "type": "object",
+        "required": [
+          "live_states",
+          "pricing",
+          "source",
+          "searches"
+        ],
+        "properties": {
+          "live_states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Live States"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/SearchPricing"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "status",
+              "checked_at"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "operational",
+                  "unavailable"
+                ],
+                "title": "Status"
+              },
+              "checked_at": {
+                "type": "string",
+                "format": "date-time",
+                "title": "Checked At"
+              }
+            },
+            "title": "Source"
+          },
+          "searches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchCatalogEntry"
+            },
+            "title": "Searches"
+          }
+        },
+        "title": "Search Catalog"
+      },
+      "SearchCatalogEntry": {
+        "type": "object",
+        "required": [
+          "state",
+          "search_type",
+          "label",
+          "credits",
+          "fields"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "search_type": {
+            "type": "string",
+            "title": "Search Type"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "blurb": {
+            "type": "string",
+            "title": "Blurb"
+          },
+          "yields": {
+            "type": "string",
+            "title": "Yields"
+          },
+          "credits": {
+            "type": "integer",
+            "title": "Credits",
+            "description": "What one run of this search costs. The one price to read; do not hardcode it."
+          },
+          "typical_seconds": {
+            "type": "integer",
+            "title": "Typical Seconds",
+            "description": "Roughly how long this search takes when the source is healthy. Size your polling against it."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchCatalogField"
+            },
+            "title": "Fields",
+            "description": "Every field this search takes, in the order a form should ask for them. A field with a lookup must be filled from getSearchLookups, not typed."
+          },
+          "one_of": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchCatalogRule"
+            },
+            "title": "One Of",
+            "description": "Groups where at least one of the named fields must be given. The message says what to tell a person who gives none of them."
+          }
+        },
+        "title": "Search Catalog Entry"
+      },
+      "SearchCatalogField": {
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "type",
+          "required"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "lookup",
+              "text",
+              "tags",
+              "select",
+              "year"
+            ],
+            "title": "Type"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required"
+          },
+          "help": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Help"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SearchCatalogFieldOption"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "lookup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchCatalogFieldLookup"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lookup",
+            "description": "The dimension to pass to getSearchLookups for this field, and which fields must be chosen before it can be asked."
+          }
+        },
+        "title": "Search Catalog Field"
+      },
+      "SearchCatalogFieldLookup": {
+        "type": "object",
+        "required": [
+          "dim"
+        ],
+        "properties": {
+          "dim": {
+            "type": "string",
+            "title": "Dim"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Dependson"
+          }
+        },
+        "title": "Search Catalog Field Lookup"
+      },
+      "SearchCatalogFieldOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "title": "Search Catalog Field Option"
+      },
+      "SearchCatalogResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SearchCatalog"
+          }
+        },
+        "title": "Search Catalog Response"
+      },
+      "SearchCatalogRule": {
+        "type": "object",
+        "required": [
+          "fields",
+          "message"
+        ],
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Fields"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "title": "Search Catalog Rule"
+      },
+      "SearchCredits": {
+        "type": "object",
+        "required": [
+          "scope",
+          "balance",
+          "spendable",
+          "pricing",
+          "ledger"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "organization",
+              "personal"
+            ],
+            "title": "Scope",
+            "description": "Whether this balance belongs to you personally or to your organisation. A key always spends the balance its own workspace owns."
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance",
+            "description": "Credits held."
+          },
+          "spendable": {
+            "type": "number",
+            "title": "Spendable",
+            "description": "What can actually be spent right now, which is the balance plus any postpaid headroom."
+          },
+          "postpaid": {
+            "type": "object",
+            "required": [
+              "enabled"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "title": "Enabled"
+              },
+              "limit": {
+                "type": "number",
+                "title": "Limit"
+              }
+            },
+            "title": "Postpaid"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/SearchPricing"
+          },
+          "ledger": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchLedgerEntry"
+            },
+            "title": "Ledger",
+            "description": "The most recent movements against the balance, newest first."
+          }
+        },
+        "title": "Search Credits"
+      },
+      "SearchCreditsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SearchCredits"
+          }
+        },
+        "title": "Search Credits Response"
+      },
+      "SearchDocument": {
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "bytes"
+        ],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          }
+        },
+        "title": "Search Document"
+      },
+      "SearchErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "title": "Code"
+              },
+              "message": {
+                "type": "string",
+                "title": "Message"
+              }
+            },
+            "title": "Error",
+            "description": "Every search failure has this shape. code is stable and safe to branch on; message is for a person."
+          }
+        },
+        "title": "Search Error Response"
+      },
+      "SearchFailure": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "title": "Search Failure"
+      },
+      "SearchItem": {
+        "type": "object",
+        "required": [
+          "state",
+          "search_type",
+          "params"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "State slug, one of those getSearchCatalog lists."
+          },
+          "search_type": {
+            "type": "string",
+            "title": "Search Type",
+            "description": "Search type slug, one of those the catalog lists for that state."
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true,
+            "title": "Params",
+            "description": "The fields this state and search type need, already resolved to the codes getSearchLookups returns for every lookup field."
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Your own name for this search, echoed back on every read."
+          }
+        },
+        "title": "Search Item"
+      },
+      "SearchLedgerEntry": {
+        "type": "object",
+        "required": [
+          "type",
+          "amount",
+          "balance_after",
+          "at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "balance_after": {
+            "type": "number",
+            "title": "Balance After"
+          },
+          "cost_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          }
+        },
+        "title": "Search Ledger Entry"
+      },
+      "SearchListResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "searches",
+              "total",
+              "limit",
+              "offset"
+            ],
+            "properties": {
+              "searches": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Search"
+                },
+                "title": "Searches"
+              },
+              "total": {
+                "type": "integer",
+                "title": "Total"
+              },
+              "limit": {
+                "type": "integer",
+                "title": "Limit"
+              },
+              "offset": {
+                "type": "integer",
+                "title": "Offset"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Search List Response"
+      },
+      "SearchLookupOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "The value to send in params for this field."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Meta",
+            "description": "Extra codes that belong with this choice. Spread them into params alongside the value."
+          }
+        },
+        "title": "Search Lookup Option"
+      },
+      "SearchLookupsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "options"
+            ],
+            "properties": {
+              "options": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SearchLookupOption"
+                },
+                "title": "Options"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Search Lookups Response"
+      },
+      "SearchOtpResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "accepted"
+            ],
+            "properties": {
+              "accepted": {
+                "type": "boolean",
+                "title": "Accepted"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Search Otp Response"
+      },
+      "SearchPricing": {
+        "type": "object",
+        "required": [
+          "search",
+          "ai_assist",
+          "ai_recovery"
+        ],
+        "properties": {
+          "search": {
+            "type": "integer",
+            "title": "Search"
+          },
+          "ai_assist": {
+            "type": "integer",
+            "title": "Ai Assist"
+          },
+          "ai_recovery": {
+            "type": "integer",
+            "title": "Ai Recovery"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "credits_per_rupee": {
+            "type": "integer",
+            "title": "Credits Per Rupee"
+          }
+        },
+        "title": "Search Pricing"
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "search"
+            ],
+            "properties": {
+              "search": {
+                "$ref": "#/components/schemas/Search"
+              }
+            },
+            "title": "Data"
+          }
+        },
+        "title": "Search Response"
+      },
+      "SearchStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "awaiting_otp",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "title": "Search Status"
+      },
       "SubmitAcknowledgementsRequest": {
         "properties": {
           "acknowledgements": {
@@ -2843,6 +4523,157 @@
         },
         "type": "object",
         "title": "SubmitDocumentReviewRequest"
+      },
+      "SubmitSearchOtpRequest": {
+        "type": "object",
+        "required": [
+          "otp"
+        ],
+        "properties": {
+          "otp": {
+            "type": "string",
+            "pattern": "^\\d{4,8}$",
+            "title": "Otp",
+            "description": "The one-time password the source asked for: 4 to 8 digits."
+          }
+        },
+        "title": "Submit Search Otp Request"
+      },
+      "SubmitSearchRequest": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State",
+            "description": "State slug, for example 'andhra'. One of the slugs getSearchCatalog lists."
+          },
+          "search_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Type",
+            "description": "Search type slug, for example 'ec' or 'index2'. One of those the catalog lists for that state."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params",
+            "description": "The fields this state and search type need, already resolved to the codes getSearchLookups returns for every lookup field."
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Your own name for this search, echoed back on every read. Useful for matching a result to your own reference."
+          },
+          "searches": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SearchItem"
+                },
+                "minItems": 1,
+                "maxItems": 25
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Searches",
+            "description": "Up to 25 searches to run in one call, each with its own state, search_type, params and optional label. Items that fail validation come back under rejected; the rest still run."
+          }
+        },
+        "title": "Submit Search Request",
+        "description": "Either one search inline (state, search_type, params) or a batch under searches. Sending both is unnecessary; the batch form wins."
+      },
+      "SubmitSearchResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SubmitSearchResult"
+          }
+        },
+        "title": "Submit Search Response"
+      },
+      "SubmitSearchResult": {
+        "type": "object",
+        "required": [
+          "searches",
+          "rejected",
+          "replayed",
+          "credits_charged",
+          "batch_id"
+        ],
+        "properties": {
+          "searches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Search"
+            },
+            "title": "Searches",
+            "description": "The searches that were accepted, each with the id to poll."
+          },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectedSearch"
+            },
+            "title": "Rejected",
+            "description": "Items that never started, by their index in your request, with the reason. A batch is not all-or-nothing."
+          },
+          "replayed": {
+            "$ref": "#/components/schemas/ReplayCounts",
+            "description": "How many of the accepted searches were answered from an identical recent run rather than from the source: free when you were the one repeating it, billed when a colleague on the account asked first."
+          },
+          "credits_charged": {
+            "type": "number",
+            "title": "Credits Charged",
+            "description": "What this call spent in total. Excludes anything answered free from your own earlier run."
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id",
+            "description": "Groups the searches this call started, so listSearches can filter to them. Null when only one search was charged."
+          }
+        },
+        "title": "Submit Search Result"
       },
       "TranslationHistoryItem": {
         "properties": {
@@ -3016,93 +4847,6 @@
           "total_pages"
         ],
         "title": "TranslationSubmitResponse"
-      },
-      "UnifiedRawSearchRequest": {
-        "properties": {
-          "state": {
-            "type": "string",
-            "title": "State",
-            "description": "State slug, for example 'andhra'. Must be one of the slugs listSearchStates returns."
-          },
-          "search_type": {
-            "type": "string",
-            "title": "Search Type",
-            "description": "Search type slug, for example 'ec' or 'index2'. Must be one the catalog lists for that state."
-          },
-          "params": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Params",
-            "description": "The parameters this state and search type require, validated against the input schema the catalog publishes for that pair."
-          },
-          "param_labels": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Param Labels",
-            "description": "Optional display text for each parameter key, so a saved search can be shown back with names rather than codes."
-          },
-          "payment_order_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Order Id"
-          },
-          "credit_source": {
-            "type": "string",
-            "title": "Credit Source",
-            "default": "personal"
-          },
-          "credit_source_org_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Credit Source Org Id",
-            "description": "Optional. Charge this search to a specific organisation's credit pool. The server validates that your key is entitled to that pool; omit it and the right pool is chosen for you."
-          },
-          "credit_source_branch_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Credit Source Branch Id",
-            "description": "Optional. Charge this search to a specific branch's credit pool. The server validates the branch against your key; omit it and the right pool is chosen for you."
-          },
-          "force": {
-            "type": "boolean",
-            "title": "Force",
-            "default": false,
-            "description": "Re-run the search rather than reusing a recent identical one. A forced run is charged again."
-          }
-        },
-        "type": "object",
-        "required": [
-          "state",
-          "search_type"
-        ],
-        "title": "UnifiedRawSearchRequest"
       },
       "ValidationError": {
         "properties": {

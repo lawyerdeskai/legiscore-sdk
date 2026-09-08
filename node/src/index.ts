@@ -16,6 +16,10 @@
  * `client.translate`, `client.extraction`, `client.webhooks`. Those methods are generated from the OpenAPI
  * spec; the helpers on the client itself collapse the multi-step flows.
  *
+ * `client.search` is the government-record search product. It runs on its own host and its own
+ * credit balance, both of which the client handles for you; override the host with
+ * `searchBaseUrl` if you have been told to.
+ *
  * Nothing in this package imports a `node:` module at load time, so it runs unchanged on
  * Node 20+, Vercel Edge, Cloudflare Workers, Deno and Bun. Passing a file path to an upload is
  * the one exception: that branch needs a filesystem and loads `node:fs/promises` on demand.
@@ -30,6 +34,7 @@ import {
 } from "./operations.js";
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_SEARCH_BASE_URL,
   LegiScoreError,
   Transport,
   contentTypeForFileName,
@@ -39,7 +44,7 @@ import {
   type UploadFile,
 } from "./transport.js";
 
-export { LegiScoreError, DEFAULT_BASE_URL };
+export { LegiScoreError, DEFAULT_BASE_URL, DEFAULT_SEARCH_BASE_URL };
 export type { RequestOptions, TransportOptions, UploadFile };
 export {
   verifyWebhook,
@@ -65,6 +70,41 @@ const DEFAULT_WAIT_TIMEOUT_MS = 3_600_000;
 
 export interface LegiScoreOptions extends TransportOptions {
   apiKey?: string;
+}
+
+/** What a key can reach on one host. */
+export interface HostCheck {
+  ok: boolean;
+  base_url: string;
+  credits?: unknown;
+  problem?: string;
+  status?: number;
+}
+
+export interface ConnectionCheck extends HostCheck {
+  scenarios?: number | unknown;
+  /**
+   * The search product runs on its own host, so it is reachable or not independently of the
+   * reports host. The top-level `ok` reports the reports host alone, which is what an
+   * integration that never calls `client.search` should be gated on; read `search.ok` before
+   * spending a search credit.
+   */
+  search: HostCheck;
+}
+
+const KEY_PROBLEMS: Record<number, string> = {
+  401: "The API key was rejected. Check it starts with lsk_ and has not been revoked.",
+  403: "The key is valid but its profile lacks a required permission.",
+};
+
+function describeFailure(error: unknown, host: string): HostCheck {
+  if (!(error instanceof LegiScoreError)) throw error;
+  return {
+    ok: false,
+    base_url: host,
+    status: error.status,
+    problem: KEY_PROBLEMS[error.status ?? 0] ?? `Could not reach ${host}: ${error.message}`,
+  };
 }
 
 export interface CreateReportOptions extends RequestOptions {
@@ -102,17 +142,24 @@ export class LegiScore {
   }
 
   /**
-   * Preflight. Prove the key reaches us and report what it can do.
+   * Preflight. Prove the key reaches both hosts and report what it can do on each.
    * Resolves rather than throwing, so a setup script can print the result.
+   *
+   * The two products run on two hosts, so they can fail independently — a network that allows
+   * one and not the other is the usual cause. `ok` is the reports host; `search.ok` is the
+   * search host. Check the one you are about to use.
    */
-  async checkConnection(options: RequestOptions = {}): Promise<{
-    ok: boolean;
-    base_url: string;
-    credits?: unknown;
-    scenarios?: number | unknown;
-    problem?: string;
-    status?: number;
-  }> {
+  async checkConnection(options: RequestOptions = {}): Promise<ConnectionCheck> {
+    const [reports, search] = await Promise.all([
+      this.checkReportsHost(options),
+      this.checkSearchHost(options),
+    ]);
+    return { ...reports, search };
+  }
+
+  private async checkReportsHost(
+    options: RequestOptions,
+  ): Promise<Omit<ConnectionCheck, "search">> {
     const baseUrl = this.transport.baseUrl;
     try {
       const credits = await this.core.getCredits(undefined, options);
@@ -125,19 +172,17 @@ export class LegiScore {
       }
       return { ok: true, base_url: baseUrl, credits, scenarios };
     } catch (error) {
-      if (error instanceof LegiScoreError) {
-        const problems: Record<number, string> = {
-          401: "The API key was rejected. Check it starts with lsk_ and has not been revoked.",
-          403: "The key is valid but its profile lacks a required permission.",
-        };
-        return {
-          ok: false,
-          base_url: baseUrl,
-          status: error.status,
-          problem: problems[error.status ?? 0] ?? `Could not reach the API: ${error.message}`,
-        };
-      }
-      throw error;
+      return describeFailure(error, baseUrl);
+    }
+  }
+
+  /** Search credits, which also proves the key itself is accepted on the search host. */
+  private async checkSearchHost(options: RequestOptions): Promise<HostCheck> {
+    const baseUrl = this.transport.searchBaseUrl;
+    try {
+      return { ok: true, base_url: baseUrl, credits: await this.search.getSearchCredits(undefined, options) };
+    } catch (error) {
+      return describeFailure(error, baseUrl);
     }
   }
 

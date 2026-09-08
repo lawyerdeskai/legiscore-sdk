@@ -1,7 +1,7 @@
 # @legiscore/sdk
 
-Node SDK for the [LegiScore](https://legiscore.in) partner API — title search and legal opinion
-reports on Indian property.
+Node SDK for the [LegiScore](https://legiscore.in) partner API — legal opinion reports and
+government record searches on Indian property.
 
 **Node 20+. Zero runtime dependencies. ESM and CommonJS both work.** Nothing is imported from
 `node:` at load time, so the same package runs unchanged in a Next.js 15 App Router app (Server
@@ -41,6 +41,12 @@ if (status.state === "completed") {
 Endpoints are grouped by module: `client.core`, `client.reports`, `client.search`,
 `client.translate`, `client.extraction`, `client.webhooks`. Every method takes an optional
 `{ signal }` as its last argument, merged with the client timeout.
+
+`client.search` is the government-record search product: its own credit balance, its own flat
+per-search price from `getSearchCatalog`, and its own host, which the client already points at.
+Submit a search, then poll `getSearch` until its status is `succeeded`, `failed` or `cancelled`,
+then pull each file with `getSearchDocument`, which resolves to bytes. Override the host with
+`searchBaseUrl` only if you have been told to.
 
 A case can pause and wait for you — `awaiting_review` means it needs missing documents, a document
 review, or risk acknowledgements before it can finish. Each pause has a matching resume method.
@@ -117,7 +123,8 @@ const client = new LegiScore({
 
 ## Errors and retries
 
-Failures throw `LegiScoreError`, which carries `.status` and `.body`.
+Failures throw `LegiScoreError`, which carries `.status`, `.body` and, when the API sent one,
+`.code` — a stable string such as `insufficient_credits`. Branch on `.code`, not on the message.
 
 > **Do not log `error.body` raw.** It is the API's own response, which on a case route contains
 > property, borrower and document details. Log `error.status` and `error.message`. The API key and
@@ -133,8 +140,13 @@ Retries are deliberately asymmetric, because replaying a write can cost money:
 | `rotateWebhookSecret` | never |
 
 `Retry-After` is honoured when the server sends one, clamped to 60 seconds; otherwise the backoff
-is exponential with jitter. `baseUrl` must be `https` (or `localhost`), and redirects are never
-followed — the API does not issue them, and following one would forward your key elsewhere.
+is exponential with jitter. `baseUrl` and `searchBaseUrl` must both be `https` (or `localhost`).
+
+Redirects are never followed on an authenticated request — following one would forward your key to
+wherever `Location` points, because `fetch` carries custom headers across a cross-origin redirect
+even though it drops `Authorization`. `getSearchDocument` is the one route that answers with a
+redirect by design: the SDK reads the signed URL and fetches it on a second request with **no key
+attached**, and refuses a target that is not `https`.
 
 ## Verifying webhooks outside Next.js
 
@@ -166,7 +178,12 @@ other auth type sends no `X-LegiScore-Signature` at all, so verification will re
 ```ts
 const report = await client.checkConnection();   // resolves, never throws
 if (!report.ok) throw new Error(report.problem);
+if (!report.search.ok) console.warn(`Searches unavailable: ${report.search.problem}`);
 ```
+
+The two products run on two hosts and fail independently, usually because a network allows one and
+not the other. `ok` is the reports host; `search.ok` is the search host. Gate on the one you are
+about to use.
 
 ## License
 

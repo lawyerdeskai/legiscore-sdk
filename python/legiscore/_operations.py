@@ -469,128 +469,256 @@ class AsyncReportsOperations(_AsyncNamespace):
 class SearchOperations(_Namespace):
     """search endpoints."""
 
+    def submit_search(self, body: dict[str, Any] | None = None, **query: Any) -> Any:
+        """Submit a search
+
+        POST /api/v1/search
+
+        Body (SubmitSearchRequest): label, params, search_type, searches, state
+        """
+        return self._transport.request(
+            "POST", "/api/v1/search", body=body, query=query, base="search"
+        )
+
+    def list_searches(self, **query: Any) -> Any:
+        """List your searches
+
+        GET /api/v1/search
+
+        Query: limit, offset, status, batch_id
+        """
+        return self._transport.request("GET", "/api/v1/search", query=query, base="search")
+
+    def assist_search(self, files: dict[str, Any] | None = None, **form: Any) -> Any:
+        """Propose search parameters from a document
+
+        POST /api/v1/search/assist
+
+        Files: file
+        Form: state, text
+        """
+        return self._transport.request_multipart(
+            "POST", "/api/v1/search/assist", files=files, form=form, base="search"
+        )
+
     def get_search_catalog(self, **query: Any) -> Any:
         """Get the search catalog
 
-        GET /api/v1/raw-search/catalog
+        GET /api/v1/search/catalog
+
+        Query: state
         """
-        return self._transport.request("GET", "/api/v1/raw-search/catalog", query=query)
+        return self._transport.request("GET", "/api/v1/search/catalog", query=query, base="search")
 
-    def list_raw_searches(self, **query: Any) -> Any:
-        """List raw searches
+    def get_search_credits(self, **query: Any) -> Any:
+        """Get your search credit balance
 
-        GET /api/v1/raw-search/history
+        GET /api/v1/search/credits
 
-        Query: limit, offset, state, search_type, status, include_extras
+        Query: limit
         """
-        return self._transport.request("GET", "/api/v1/raw-search/history", query=query)
+        return self._transport.request("GET", "/api/v1/search/credits", query=query, base="search")
 
-    def list_lookup_dimensions(self, **query: Any) -> Any:
-        """List lookup dimensions
+    def get_search_lookups(self, **query: Any) -> Any:
+        """Resolve a lookup to its codes
 
-        GET /api/v1/raw-search/lookups
+        GET /api/v1/search/lookups
+
+        Query: state, dim, q, district, mandal, limit
         """
-        return self._transport.request("GET", "/api/v1/raw-search/lookups", query=query)
+        return self._transport.request("GET", "/api/v1/search/lookups", query=query, base="search")
 
-    def get_lookup_values(self, state: str, dimension: str, **query: Any) -> Any:
-        """Get lookup values
+    def get_search(self, search_id: str, **query: Any) -> Any:
+        """Get one search
 
-        GET /api/v1/raw-search/lookups/{state}/{dimension}
+        GET /api/v1/search/{search_id}
         """
         return self._transport.request(
+            "GET", f"/api/v1/search/{quote(str(search_id), safe='')}", query=query, base="search"
+        )
+
+    def cancel_search(self, search_id: str, **query: Any) -> Any:
+        """Cancel a search
+
+        DELETE /api/v1/search/{search_id}
+        """
+        return self._transport.request(
+            "DELETE", f"/api/v1/search/{quote(str(search_id), safe='')}", query=query, base="search"
+        )
+
+    def get_search_document(self, search_id: str, filename: str, **query: Any) -> Any:
+        """Download a document from a search
+
+        GET /api/v1/search/{search_id}/documents/{filename}
+
+        Returns bytes, not JSON. The API answers with a redirect to a short-lived
+        signed URL, which the SDK follows for you without sending your API key.
+        """
+        return self._transport.request_download(
             "GET",
-            f"/api/v1/raw-search/lookups/{quote(str(state), safe='')}/{quote(str(dimension), safe='')}",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/documents/{quote(str(filename), safe='')}",
             query=query,
+            base="search",
         )
 
-    def list_search_states(self, **query: Any) -> Any:
-        """List searchable states
+    def submit_search_otp(
+        self, search_id: str, body: dict[str, Any] | None = None, **query: Any
+    ) -> Any:
+        """Supply a one-time password
 
-        GET /api/v1/raw-search/states
-        """
-        return self._transport.request("GET", "/api/v1/raw-search/states", query=query)
+        POST /api/v1/search/{search_id}/otp
 
-    def get_raw_search_status(self, job_id: str, **query: Any) -> Any:
-        """Get raw search status
-
-        GET /api/v1/raw-search/status/{job_id}
+        Body (SubmitSearchOtpRequest): otp
         """
         return self._transport.request(
-            "GET", f"/api/v1/raw-search/status/{quote(str(job_id), safe='')}", query=query
+            "POST",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/otp",
+            body=body,
+            query=query,
+            base="search",
         )
 
-    def submit_raw_search(self, body: dict[str, Any] | None = None, **query: Any) -> Any:
-        """Submit a raw search
+    def recover_search(self, search_id: str, **query: Any) -> Any:
+        """Recover an incomplete search
 
-        POST /api/v1/raw-search/submit
-
-        Body (UnifiedRawSearchRequest): credit_source, credit_source_branch_id, credit_source_org_id, force, param_labels, params, payment_order_id, search_type, state
+        POST /api/v1/search/{search_id}/recover
         """
-        return self._transport.request("POST", "/api/v1/raw-search/submit", body=body, query=query)
+        return self._transport.request(
+            "POST",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/recover",
+            query=query,
+            base="search",
+        )
 
 
 class AsyncSearchOperations(_AsyncNamespace):
     """search endpoints, awaited."""
 
+    async def submit_search(self, body: dict[str, Any] | None = None, **query: Any) -> Any:
+        """Submit a search
+
+        POST /api/v1/search
+
+        Body (SubmitSearchRequest): label, params, search_type, searches, state
+        """
+        return await self._transport.request(
+            "POST", "/api/v1/search", body=body, query=query, base="search"
+        )
+
+    async def list_searches(self, **query: Any) -> Any:
+        """List your searches
+
+        GET /api/v1/search
+
+        Query: limit, offset, status, batch_id
+        """
+        return await self._transport.request("GET", "/api/v1/search", query=query, base="search")
+
+    async def assist_search(self, files: dict[str, Any] | None = None, **form: Any) -> Any:
+        """Propose search parameters from a document
+
+        POST /api/v1/search/assist
+
+        Files: file
+        Form: state, text
+        """
+        return await self._transport.request_multipart(
+            "POST", "/api/v1/search/assist", files=files, form=form, base="search"
+        )
+
     async def get_search_catalog(self, **query: Any) -> Any:
         """Get the search catalog
 
-        GET /api/v1/raw-search/catalog
-        """
-        return await self._transport.request("GET", "/api/v1/raw-search/catalog", query=query)
+        GET /api/v1/search/catalog
 
-    async def list_raw_searches(self, **query: Any) -> Any:
-        """List raw searches
-
-        GET /api/v1/raw-search/history
-
-        Query: limit, offset, state, search_type, status, include_extras
-        """
-        return await self._transport.request("GET", "/api/v1/raw-search/history", query=query)
-
-    async def list_lookup_dimensions(self, **query: Any) -> Any:
-        """List lookup dimensions
-
-        GET /api/v1/raw-search/lookups
-        """
-        return await self._transport.request("GET", "/api/v1/raw-search/lookups", query=query)
-
-    async def get_lookup_values(self, state: str, dimension: str, **query: Any) -> Any:
-        """Get lookup values
-
-        GET /api/v1/raw-search/lookups/{state}/{dimension}
+        Query: state
         """
         return await self._transport.request(
+            "GET", "/api/v1/search/catalog", query=query, base="search"
+        )
+
+    async def get_search_credits(self, **query: Any) -> Any:
+        """Get your search credit balance
+
+        GET /api/v1/search/credits
+
+        Query: limit
+        """
+        return await self._transport.request(
+            "GET", "/api/v1/search/credits", query=query, base="search"
+        )
+
+    async def get_search_lookups(self, **query: Any) -> Any:
+        """Resolve a lookup to its codes
+
+        GET /api/v1/search/lookups
+
+        Query: state, dim, q, district, mandal, limit
+        """
+        return await self._transport.request(
+            "GET", "/api/v1/search/lookups", query=query, base="search"
+        )
+
+    async def get_search(self, search_id: str, **query: Any) -> Any:
+        """Get one search
+
+        GET /api/v1/search/{search_id}
+        """
+        return await self._transport.request(
+            "GET", f"/api/v1/search/{quote(str(search_id), safe='')}", query=query, base="search"
+        )
+
+    async def cancel_search(self, search_id: str, **query: Any) -> Any:
+        """Cancel a search
+
+        DELETE /api/v1/search/{search_id}
+        """
+        return await self._transport.request(
+            "DELETE", f"/api/v1/search/{quote(str(search_id), safe='')}", query=query, base="search"
+        )
+
+    async def get_search_document(self, search_id: str, filename: str, **query: Any) -> Any:
+        """Download a document from a search
+
+        GET /api/v1/search/{search_id}/documents/{filename}
+
+        Returns bytes, not JSON. The API answers with a redirect to a short-lived
+        signed URL, which the SDK follows for you without sending your API key.
+        """
+        return await self._transport.request_download(
             "GET",
-            f"/api/v1/raw-search/lookups/{quote(str(state), safe='')}/{quote(str(dimension), safe='')}",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/documents/{quote(str(filename), safe='')}",
             query=query,
+            base="search",
         )
 
-    async def list_search_states(self, **query: Any) -> Any:
-        """List searchable states
+    async def submit_search_otp(
+        self, search_id: str, body: dict[str, Any] | None = None, **query: Any
+    ) -> Any:
+        """Supply a one-time password
 
-        GET /api/v1/raw-search/states
-        """
-        return await self._transport.request("GET", "/api/v1/raw-search/states", query=query)
+        POST /api/v1/search/{search_id}/otp
 
-    async def get_raw_search_status(self, job_id: str, **query: Any) -> Any:
-        """Get raw search status
-
-        GET /api/v1/raw-search/status/{job_id}
+        Body (SubmitSearchOtpRequest): otp
         """
         return await self._transport.request(
-            "GET", f"/api/v1/raw-search/status/{quote(str(job_id), safe='')}", query=query
+            "POST",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/otp",
+            body=body,
+            query=query,
+            base="search",
         )
 
-    async def submit_raw_search(self, body: dict[str, Any] | None = None, **query: Any) -> Any:
-        """Submit a raw search
+    async def recover_search(self, search_id: str, **query: Any) -> Any:
+        """Recover an incomplete search
 
-        POST /api/v1/raw-search/submit
-
-        Body (UnifiedRawSearchRequest): credit_source, credit_source_branch_id, credit_source_org_id, force, param_labels, params, payment_order_id, search_type, state
+        POST /api/v1/search/{search_id}/recover
         """
         return await self._transport.request(
-            "POST", "/api/v1/raw-search/submit", body=body, query=query
+            "POST",
+            f"/api/v1/search/{quote(str(search_id), safe='')}/recover",
+            query=query,
+            base="search",
         )
 
 

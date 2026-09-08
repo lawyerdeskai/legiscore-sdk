@@ -22,6 +22,9 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 DEFAULT_BASE_URL = "https://opinion.legiscore.in"
+# Search is a separate product on a separate host. The spec says so per path, so the generated
+# methods ask for this base by name rather than every caller having to know which is which.
+DEFAULT_SEARCH_BASE_URL = "https://legiscore.in"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 3
 
@@ -63,17 +66,27 @@ class LegiScoreError(Exception):
     """A LegiScore API call failed.
 
     ``status_code`` is the HTTP status and ``body`` the decoded response, so callers can
-    branch on the reason rather than parsing the message string.
+    branch on the reason rather than parsing the message string. ``code`` is the API's own
+    error code when it sent one, e.g. ``"insufficient_credits"``; it is stable, and the thing
+    to branch on, because the message is written for a person and may be reworded.
 
     ``body`` is the API's reply verbatim and may contain customer data — names, identifiers,
     document text. Do not log it raw; log ``status_code`` and ``str(error)``, which carry no
     customer data, no API key and no request headers.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None, body: Any = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        body: Any = None,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.code = code
 
 
 class MissingAPIKeyError(LegiScoreError):
@@ -183,6 +196,70 @@ def build_multipart_parts(files: dict[str, Any] | None) -> list[tuple[str, tuple
     return parts
 
 
+def read_failure(payload: Any) -> tuple[str | None, str | None]:
+    """Pull ``(code, detail)`` out of a failure body, whichever shape it arrived in.
+
+    Two shapes are in use: ``{"detail": ...}`` from the report modules and
+    ``{"error": {"code", "message"}}`` from search. A top-level ``code`` is read as well, so a
+    problem+json body is not lost.
+    """
+    if not isinstance(payload, dict):
+        return None, None
+
+    nested = payload.get("error")
+    if isinstance(nested, dict):
+        code = nested.get("code")
+        message = nested.get("message")
+        return (
+            code if isinstance(code, str) else None,
+            message if isinstance(message, str) else None,
+        )
+
+    code = payload.get("code")
+    detail = payload.get("detail")
+    return (
+        code if isinstance(code, str) else None,
+        None if detail is None else str(detail),
+    )
+
+
+def resolve_signed_url(response: httpx.Response) -> str:
+    """The absolute target of a redirect the API answered with, refused unless it is encrypted.
+
+    The signed URL belongs to a storage host, so it is fetched on a client with no API key on it.
+    That is only safe if the target really is the host we were sent to over TLS.
+    """
+    location = response.headers.get("location", "")
+    if not location:
+        raise LegiScoreError(
+            f"{response.request.url.path} redirected with no Location header.",
+            status_code=response.status_code,
+        )
+    target = response.request.url.join(location)
+    host = (target.host or "").lower()
+    if target.scheme != "https" and host not in LOCAL_HOSTS:
+        raise LegiScoreError(
+            f"{response.request.url.path} redirected to {target.scheme}://{host}, "
+            "which is not https. The SDK will not fetch it."
+        )
+    return str(target)
+
+
+def unwrap_download(response: httpx.Response, path: str) -> bytes:
+    """The bytes of a signed-URL download, or an error naming the API path that produced it."""
+    if response.status_code >= HTTP_ERROR_FLOOR:
+        raise LegiScoreError(
+            f"Downloading {path} failed: {response.status_code}",
+            status_code=response.status_code,
+        )
+    if response.is_redirect:
+        raise LegiScoreError(
+            f"Downloading {path} redirected again, which a signed URL never does.",
+            status_code=response.status_code,
+        )
+    return response.content
+
+
 def unwrap_response(response: httpx.Response) -> Any:
     """Decode a reply, or raise :class:`LegiScoreError` describing why it failed."""
     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
@@ -195,14 +272,25 @@ def unwrap_response(response: httpx.Response) -> Any:
     else:
         payload = response.content  # ZIP downloads and other binaries
 
+    if response.is_redirect:
+        # Only the download route is allowed one, and it never reaches here. Anywhere else a
+        # 3xx would otherwise hand back an empty body as though the call had succeeded.
+        raise LegiScoreError(
+            f"{response.request.url.path} answered with a redirect "
+            f"({response.status_code}); the LegiScore API does not redirect here. "
+            "Check base_url.",
+            status_code=response.status_code,
+        )
+
     if response.status_code >= HTTP_ERROR_FLOOR:
-        detail = payload.get("detail") if isinstance(payload, dict) else None
+        code, detail = read_failure(payload)
         # The path, never the full URL: query values can carry identifiers.
         raise LegiScoreError(
             f"{response.status_code} {response.reason_phrase}: "
             f"{detail or response.request.url.path}",
             status_code=response.status_code,
             body=payload,
+            code=code,
         )
     return payload
 
@@ -245,12 +333,17 @@ class Transport:
         api_key: str,
         *,
         base_url: str = DEFAULT_BASE_URL,
+        search_base_url: str = DEFAULT_SEARCH_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
         client: httpx.Client | None = None,
     ) -> None:
         key = require_api_key(api_key)
         self.base_url = normalise_base_url(base_url) + "/"
+        # Where the search module is sent. Named per module so the generated methods can ask
+        # for a base by name instead of every caller knowing which host serves what.
+        self.search_base_url = normalise_base_url(search_base_url) + "/"
+        self._module_base_urls = {"search": self.search_base_url}
         self.max_retries = max_retries
         self._client = client or httpx.Client(**build_api_client_kwargs(key, timeout))
         # Presigned URLs carry their own auth, so uploads go out on a second pooled client that
@@ -264,8 +357,9 @@ class Transport:
         *,
         body: dict[str, Any] | None = None,
         query: dict[str, Any] | None = None,
+        base: str | None = None,
     ) -> Any:
-        return self._send(method, path, query, json=body)
+        return self._send(method, path, query, base=base, json=body)
 
     def request_multipart(
         self,
@@ -274,14 +368,53 @@ class Transport:
         *,
         files: dict[str, Any] | None = None,
         form: dict[str, Any] | None = None,
+        base: str | None = None,
     ) -> Any:
         """Send a file upload. ``files`` maps a field name to a path, or a list of paths."""
         parts = build_multipart_parts(files)
         data = {k: str(v) for k, v in (form or {}).items() if v is not None}
-        return self._send(method, path, None, files=parts or None, data=data or None)
+        return self._send(method, path, None, base=base, files=parts or None, data=data or None)
 
-    def _send(self, method: str, path: str, query: dict[str, Any] | None, **payload: Any) -> Any:
-        url = urljoin(self.base_url, path.lstrip("/"))
+    def request_download(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, Any] | None = None,
+        base: str | None = None,
+    ) -> bytes:
+        """Fetch a file the API hands over by redirect, and return its bytes.
+
+        The route answers 302 with a short-lived signed URL. The redirect is resolved here and
+        the URL is fetched on the storage client, which has no API key on it, so a credential is
+        never sent to a host that is not ours.
+        """
+        return self._send(method, path, query, base=base, allow_redirect=True)  # type: ignore[no-any-return]
+
+    def _follow_download(self, response: httpx.Response) -> bytes:
+        path = response.request.url.path
+        target = resolve_signed_url(response)
+        try:
+            downloaded = self._storage.get(target, timeout=UPLOAD_TIMEOUT)
+        except httpx.RequestError as exc:
+            raise LegiScoreError(f"Downloading {path} failed: {exc}") from exc
+        return unwrap_download(downloaded, path)
+
+    def _base_for(self, base: str | None) -> str:
+        """The host for one call. An unknown name falls back to ``base_url`` rather than raising,
+        so an older client paired with a newer spec still reaches something."""
+        return self._module_base_urls.get(base or "", self.base_url)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        query: dict[str, Any] | None,
+        base: str | None = None,
+        allow_redirect: bool = False,
+        **payload: Any,
+    ) -> Any:
+        url = urljoin(self._base_for(base), path.lstrip("/"))
         params = {k: v for k, v in (query or {}).items() if v is not None}
         policy = resolve_retry_policy(method, path)
         headers = dict(payload.pop("headers", {}) or {})
@@ -301,6 +434,8 @@ class Transport:
                 time.sleep(compute_backoff(attempt, None))
                 continue
 
+            if allow_redirect and response.is_redirect:
+                return self._follow_download(response)
             if response.status_code in policy.statuses and attempt < self.max_retries:
                 time.sleep(compute_backoff(attempt, response.headers.get("Retry-After")))
                 continue
@@ -354,12 +489,17 @@ class AsyncTransport:
         api_key: str,
         *,
         base_url: str = DEFAULT_BASE_URL,
+        search_base_url: str = DEFAULT_SEARCH_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         key = require_api_key(api_key)
         self.base_url = normalise_base_url(base_url) + "/"
+        # Where the search module is sent. Named per module so the generated methods can ask
+        # for a base by name instead of every caller knowing which host serves what.
+        self.search_base_url = normalise_base_url(search_base_url) + "/"
+        self._module_base_urls = {"search": self.search_base_url}
         self.max_retries = max_retries
         self._client = client or httpx.AsyncClient(**build_api_client_kwargs(key, timeout))
         self._storage = httpx.AsyncClient(**build_storage_client_kwargs())
@@ -371,8 +511,9 @@ class AsyncTransport:
         *,
         body: dict[str, Any] | None = None,
         query: dict[str, Any] | None = None,
+        base: str | None = None,
     ) -> Any:
-        return await self._send(method, path, query, json=body)
+        return await self._send(method, path, query, base=base, json=body)
 
     async def request_multipart(
         self,
@@ -381,16 +522,50 @@ class AsyncTransport:
         *,
         files: dict[str, Any] | None = None,
         form: dict[str, Any] | None = None,
+        base: str | None = None,
     ) -> Any:
         """Send a file upload. ``files`` maps a field name to a path, or a list of paths."""
         parts = build_multipart_parts(files)
         data = {k: str(v) for k, v in (form or {}).items() if v is not None}
-        return await self._send(method, path, None, files=parts or None, data=data or None)
+        return await self._send(
+            method, path, None, base=base, files=parts or None, data=data or None
+        )
+
+    async def request_download(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, Any] | None = None,
+        base: str | None = None,
+    ) -> bytes:
+        """Fetch a file the API hands over by redirect. See :meth:`Transport.request_download`."""
+        return await self._send(method, path, query, base=base, allow_redirect=True)  # type: ignore[no-any-return]
+
+    async def _follow_download(self, response: httpx.Response) -> bytes:
+        path = response.request.url.path
+        target = resolve_signed_url(response)
+        try:
+            downloaded = await self._storage.get(target, timeout=UPLOAD_TIMEOUT)
+        except httpx.RequestError as exc:
+            raise LegiScoreError(f"Downloading {path} failed: {exc}") from exc
+        return unwrap_download(downloaded, path)
+
+    def _base_for(self, base: str | None) -> str:
+        """The host for one call. An unknown name falls back to ``base_url`` rather than raising,
+        so an older client paired with a newer spec still reaches something."""
+        return self._module_base_urls.get(base or "", self.base_url)
 
     async def _send(
-        self, method: str, path: str, query: dict[str, Any] | None, **payload: Any
+        self,
+        method: str,
+        path: str,
+        query: dict[str, Any] | None,
+        base: str | None = None,
+        allow_redirect: bool = False,
+        **payload: Any,
     ) -> Any:
-        url = urljoin(self.base_url, path.lstrip("/"))
+        url = urljoin(self._base_for(base), path.lstrip("/"))
         params = {k: v for k, v in (query or {}).items() if v is not None}
         policy = resolve_retry_policy(method, path)
         headers = dict(payload.pop("headers", {}) or {})
@@ -410,6 +585,8 @@ class AsyncTransport:
                 await asyncio.sleep(compute_backoff(attempt, None))
                 continue
 
+            if allow_redirect and response.is_redirect:
+                return await self._follow_download(response)
             if response.status_code in policy.statuses and attempt < self.max_retries:
                 await asyncio.sleep(compute_backoff(attempt, response.headers.get("Retry-After")))
                 continue

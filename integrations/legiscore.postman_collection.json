@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "LegiScore Partner API: guided flow",
-    "description": "The report flow, in the order you run it. Folders are numbered: work down them.\n\nTHE ONE THING TO KNOW\n  The three enable*Review flags default to TRUE. With them on, a run pauses and waits for you\n  indefinitely, there is no timeout and no auto-proceed. Use 2a for unattended runs.\n\nSETUP\n  1. Import this collection and its environment.\n  2. Set api_key to your lsk_ key. base_url is preset to https://opinion.legiscore.in.\n  3. Run folders in order: 0 -> 1 -> 2a -> 3 (poll) -> 8.\n\nRequests chain themselves: presign captures the upload URL, complete captures document_id,\ncreate captures case_id. Run them in order and you never copy an id by hand.\n\nAuth is collection-level: X-API-Key. (Authorization: Bearer <key> also works.)\n\nEvery endpoint, including the ones this flow does not use, is in the reference collection\nalongside this file. That one is generated from the OpenAPI spec.",
+    "description": "The report flow, in the order you run it. Folders are numbered: work down them.\n\nTHE ONE THING TO KNOW\n  The three enable*Review flags default to TRUE. With them on, a run pauses and waits for you\n  indefinitely, there is no timeout and no auto-proceed. Use 2a for unattended runs.\n\nSETUP\n  1. Import this collection and its environment.\n  2. Set api_key to your lsk_ key. base_url is preset to https://opinion.legiscore.in,\n     and search_base_url to https://legiscore.in \u2014 folder 9 is a different product on a\n     different host, sharing the same key.\n  3. Run folders in order: 0 -> 1 -> 2a -> 3 (poll) -> 8.\n\nRequests chain themselves: presign captures the upload URL, complete captures document_id,\ncreate captures case_id. Run them in order and you never copy an id by hand.\n\nAuth is collection-level: X-API-Key. (Authorization: Bearer <key> also works.)\n\nEvery endpoint, including the ones this flow does not use, is in the reference collection\nalongside this file. That one is generated from the OpenAPI spec.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -755,6 +755,302 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "9. Government record searches",
+      "description": "A separate product from the report flow, and it does not share its money.\n\n  * Different host. Every request here uses {{search_base_url}}, not {{base_url}}.\n  * Different credits. 9b reads them; the report balance in folder 0 is a different pot.\n  * Flat price per search, stated by 9a. Charged when a search is accepted and returned\n    if the source cannot be reached.\n\nRun 9a to see what can be searched, 9c to turn a name into the codes a search needs,\nthen 9d -> 9e -> 9g. A succeeded search with found=false is an answer: the source was\nreached and holds nothing against that property.",
+      "item": [
+        {
+          "name": "9a. Catalog \u2014 what can be searched, and what it costs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search/catalog",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "catalog"
+              ]
+            },
+            "description": "Every live state, the search types in it, the fields each one takes and the current price per search. Needs no key, so it is the one request here you can run before you have one.\n\nRead the price from this response. Do not hardcode it.\n\nsource.status says whether the government source is reachable right now. When it is unavailable, searches will not consume credits: the charge is reversed the moment a job fails to reach the portal."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log('Live states:', d.live_states.join(', '));",
+                  "console.log('Price per search:', d.pricing.search, 'credits');",
+                  "console.log('Source:', d.source.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9b. Search credits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search/credits?limit=20",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "credits"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "The search balance, what is spendable right now, and the recent movements against it.\n\nThis is NOT the balance folder 0 shows. A run of searches can never spend the credits bought to generate reports, and vice versa. If this 401s while folder 0 passes, your network reaches one host and not the other."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log('Search credits:', d.spendable, 'spendable of', d.balance);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9c. Lookups \u2014 turn a name into the codes a search needs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search/lookups?state=andhra&dim=sro",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "lookups"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "andhra"
+                },
+                {
+                  "key": "dim",
+                  "value": "sro"
+                }
+              ]
+            },
+            "description": "Lookup fields are picked, never typed. 9a names the dimension each field uses (sro, district, mandal, village and the rest); this returns the valid options for one of them.\n\nSend the option's value AND spread its meta into params \u2014 those are the codes the source actually keys on. A nested dimension needs its parent first: ask for a village with district and mandal already chosen, or you get missing_parent."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const options = pm.response.json().data.options;",
+                  "console.log('Options:', options.length);",
+                  "if (options.length) {",
+                  "  console.log('First:', options[0].label, '->', options[0].value, JSON.stringify(options[0].meta));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9d. Submit a search",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ]
+            },
+            "description": "Fill state, search_type and params from 9a and 9c, then send. 202 means accepted, not finished \u2014 poll 9e.\n\nFor a batch, replace the body with {\"searches\": [ ... ]}, up to 25. A batch runs the items that validated: read `rejected`, which names the index of each one that did not, and `credits_charged` for what the call actually spent.\n\n402 with code insufficient_credits means top up; nothing was charged.\nreplayed counts the searches answered from an identical run of yours in the last 24 hours, which cost nothing and never touched the source.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"state\": \"\",\n  \"search_type\": \"\",\n  \"params\": {},\n  \"label\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "const d = pm.response.json().data;",
+                  "if (d.rejected.length) console.log('Rejected:', JSON.stringify(d.rejected));",
+                  "const first = d.searches[0];",
+                  "pm.test('at least one search started', () => pm.expect(first).to.be.an('object'));",
+                  "pm.environment.set('search_id', first.id);",
+                  "console.log('Search id:', first.id, '| charged:', d.credits_charged);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9e. Poll the search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search/{{search_id}}",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "{{search_id}}"
+              ]
+            },
+            "description": "Repeat until status is succeeded, failed or cancelled. 9a's typical_seconds tells you how long to expect; every few seconds is a sensible interval.\n\nfound=false on a SUCCEEDED search is an answer, not an error: the source was reached and holds nothing against that property. Do not retry it.\n\nstatus awaiting_otp means the source asked for a one-time password; POST it to /api/v1/search/{{search_id}}/otp. Most searches never reach that state."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json().data.search;",
+                  "console.log('Status:', s.status, '| found:', s.found, '| records:', s.record_count);",
+                  "if (s.documents && s.documents.length) {",
+                  "  pm.collectionVariables.set('search_document', s.documents[0].filename);",
+                  "  console.log('Documents:', s.documents.map((d) => d.filename).join(', '));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9f. List your searches",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search?limit=20&offset=0",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Newest first. Anything still in flight is refreshed on the way past, so a list call doubles as a poll for a whole batch.\n\nAdd status= to filter, or batch_id= to see only the searches one submit started."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log('Showing', d.searches.length, 'of', d.total);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9g. Download a document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{search_base_url}}/api/v1/search/{{search_id}}/documents/{{search_document}}",
+              "host": [
+                "{{search_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "{{search_id}}",
+                "documents",
+                "{{search_document}}"
+              ]
+            },
+            "description": "The filename comes from 9e's documents list; 9e captures the first one into search_document for you.\n\nThis answers 302 with a signed URL that expires in an hour. Postman follows redirects by default and will show you the file. If you are writing the call yourself, do NOT follow the redirect on the same connection: your API key is a custom header, and custom headers are forwarded across a cross-origin redirect. Read the Location header and fetch it with no key attached. Both SDKs already do this.\n\nThe file is looked up in the search's own document list, so a filename that is not on this search is 404."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the file came back', () => pm.response.to.have.status(200));",
+                  "console.log('Bytes:', pm.response.responseSize, '| type:', pm.response.headers.get('content-type'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
@@ -763,6 +1059,12 @@
       "value": "",
       "type": "string",
       "description": "A document id to create a case from. Ships empty. Folder 1c fills it in for you, or paste in an id you already hold."
+    },
+    {
+      "key": "search_document",
+      "value": "",
+      "type": "string",
+      "description": "A filename from a search's documents list. Ships empty. Request 9e fills it in for you."
     }
   ]
 }

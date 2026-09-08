@@ -184,14 +184,14 @@ def test_an_unkeyed_write_never_replays_on_5xx() -> None:
     """A 502 is not proof the server refused the work, so repeating it could charge twice."""
     for status in (502, 503, 504):
         attempts = count_attempts(
-            status, lambda c: c.search.submit_raw_search(body={"state": "telangana"})
+            status, lambda c: c.search.submit_search(body={"state": "telangana"})
         )
         assert attempts == 1, f"an unkeyed write on {status} was replayed {attempts} times"
 
 
 def test_an_unkeyed_write_still_replays_on_429() -> None:
     """429 is the server declining before it runs, so the work definitely did not happen."""
-    attempts = count_attempts(429, lambda c: c.search.submit_raw_search(body={"state": "tg"}))
+    attempts = count_attempts(429, lambda c: c.search.submit_search(body={"state": "tg"}))
     assert attempts == 4, attempts
 
 
@@ -362,10 +362,13 @@ def test_check_connection_reports_a_bad_key_instead_of_raising() -> None:
     assert report["ok"] is False, report
     assert "rejected" in report["problem"], report
     assert report["status_code"] == 401, report
+    assert report["search"]["ok"] is False, "a rejected key is rejected on both hosts"
 
 
 def test_check_connection_reports_a_working_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/search/credits":
+            return httpx.Response(200, json={"balance": 7})
         if request.url.path == "/api/v1/credits":
             return httpx.Response(200, json={"balance": 42})
         return httpx.Response(200, json=[{"code": "purchase"}, {"code": "lease"}])
@@ -374,6 +377,190 @@ def test_check_connection_reports_a_working_key() -> None:
     assert report["ok"] is True, report
     assert report["credits"] == {"balance": 42}, report
     assert report["scenarios"] == 2, report
+    assert report["search"] == {
+        "ok": True,
+        "base_url": "https://legiscore.in",
+        "credits": {"balance": 7},
+    }, report
+
+
+# -- the search module -------------------------------------------------------
+# Search is a separate product on a separate host with its own credit balance. Two things have
+# to hold: the call goes to that host and nowhere else, and its error shape reaches the caller
+# as the same exception type the rest of the SDK raises.
+
+
+def test_a_search_goes_to_the_search_host_with_the_key() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers.get("X-API-Key")
+        return httpx.Response(202, json={"data": {"searches": []}})
+
+    build_client(handler).search.submit_search(
+        body={"state": "andhra", "search_type": "ec", "params": {"sro": "1"}}
+    )
+    assert seen["url"] == "https://legiscore.in/api/v1/search", seen
+    assert seen["key"] == TEST_KEY, seen
+
+
+def test_a_report_call_still_goes_to_the_reports_host() -> None:
+    """The override is per operation, so adding a host must not move the other modules."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"state": "queued"})
+
+    build_client(handler).reports.get_case_status("RPT-1")
+    assert seen["url"].startswith("https://opinion.legiscore.in/"), seen
+
+
+def test_search_base_url_is_overridable_and_validated_like_base_url() -> None:
+    try:
+        Transport(TEST_KEY, search_base_url="http://legiscore.in")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unencrypted search_base_url would leak the key too")
+
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"data": {}})
+
+    build_client(handler, search_base_url="http://localhost:3000").search.get_search_catalog()
+    assert seen["url"] == "http://localhost:3000/api/v1/search/catalog", seen
+
+
+def test_insufficient_credits_carries_the_code_not_just_the_status() -> None:
+    """Search fails as {"error": {code, message}}; the report modules fail as {"detail": ...}.
+
+    Both have to arrive as one exception type carrying a code worth branching on.
+    """
+    handler = respond(
+        402,
+        json={
+            "error": {
+                "code": "insufficient_credits",
+                "message": "This run needs 20 search credits; 0 available.",
+            }
+        },
+    )
+    try:
+        build_client(handler).search.submit_search(body={"state": "andhra"})
+    except LegiScoreError as error:
+        assert error.status_code == 402, error.status_code
+        assert error.code == "insufficient_credits", error.code
+        assert "search credits" in str(error), str(error)
+        return
+    raise AssertionError("a 402 from search must raise LegiScoreError")
+
+
+def test_a_conflict_from_search_keeps_its_code_too() -> None:
+    handler = respond(
+        409,
+        json={"error": {"code": "already_finished", "message": "This search already succeeded."}},
+    )
+    try:
+        build_client(handler).search.cancel_search("SRCH-1")
+    except LegiScoreError as error:
+        assert error.code == "already_finished", error.code
+        return
+    raise AssertionError("a 409 from search must raise LegiScoreError")
+
+
+def test_a_search_document_is_fetched_from_the_signed_url_without_the_key() -> None:
+    """The route answers 302. The signed URL belongs to a storage host, so it gets no key."""
+    seen: list[tuple[str, str | None]] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("X-API-Key")))
+        return httpx.Response(302, headers={"location": "https://files.example/x?sig=1"})
+
+    def storage(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("X-API-Key")))
+        return httpx.Response(200, content=b"%PDF")
+
+    client = build_client(api)
+    use_mock_storage(client, storage)
+
+    assert client.search.get_search_document("SRCH-1", "ec.pdf") == b"%PDF"
+    assert seen[0] == (
+        "https://legiscore.in/api/v1/search/SRCH-1/documents/ec.pdf",
+        TEST_KEY,
+    ), seen
+    assert seen[1] == ("https://files.example/x?sig=1", None), "the signed URL gets no API key"
+
+
+def test_a_document_filename_cannot_walk_out_of_its_search() -> None:
+    """raw_path, not path: httpx decodes `path`, and what goes on the wire is what matters."""
+    seen: dict[str, bytes] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["raw"] = request.url.raw_path
+        return httpx.Response(
+            404, json={"error": {"code": "not_found", "message": "No such document."}}
+        )
+
+    try:
+        build_client(handler).search.get_search_document("SRCH-1", "../../secrets")
+    except LegiScoreError as error:
+        assert error.code == "not_found", error.code
+        assert seen["raw"] == b"/api/v1/search/SRCH-1/documents/..%2F..%2Fsecrets", seen
+        return
+    raise AssertionError("a missing document must raise")
+
+
+def test_a_redirect_to_plain_http_is_refused_rather_than_followed() -> None:
+    handler = respond(302, headers={"location": "http://files.example/x"})
+    try:
+        build_client(handler).search.get_search_document("SRCH-1", "ec.pdf")
+    except LegiScoreError as error:
+        assert "not https" in str(error), str(error)
+        return
+    raise AssertionError("an unencrypted redirect target must be refused")
+
+
+def test_a_redirect_anywhere_else_is_an_error_not_an_empty_body() -> None:
+    """Only the download route opts in; elsewhere a 3xx used to return an empty body."""
+    handler = respond(302, headers={"location": "https://elsewhere.example/"})
+    try:
+        build_client(handler).search.get_search("SRCH-1")
+    except LegiScoreError as error:
+        assert "redirect" in str(error), str(error)
+        return
+    raise AssertionError("a stray redirect must raise rather than look like success")
+
+
+def test_check_connection_reports_each_host_separately() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "legiscore.in":
+            return httpx.Response(401, json={"error": {"code": "unauthorized", "message": "no"}})
+        if request.url.path == "/api/v1/credits":
+            return httpx.Response(200, json={"balance": 42})
+        return httpx.Response(200, json=[{"code": "purchase"}])
+
+    report = build_client(handler).check_connection()
+    assert report["ok"] is True, "the reports host answered, so ok stays true"
+    assert report["credits"] == {"balance": 42}, report
+    assert report["search"]["ok"] is False, report
+    assert report["search"]["base_url"] == "https://legiscore.in", report
+    assert report["search"]["status_code"] == 401, report
+    assert "rejected" in report["search"]["problem"], report
+
+
+def test_a_detail_shaped_failure_still_has_no_code() -> None:
+    """The report modules send no code, so `code` must be None rather than a guess."""
+    try:
+        build_client(respond(422, json={"detail": "bad payload"})).reports.get_case_status("R")
+    except LegiScoreError as error:
+        assert error.code is None, error.code
+        assert "bad payload" in str(error), str(error)
+        return
+    raise AssertionError("a 422 must raise LegiScoreError")
 
 
 # -- the async twin ----------------------------------------------------------
@@ -409,6 +596,52 @@ def test_async_wait_for_case_polls_until_the_case_settles() -> None:
     assert asyncio.run(scenario())["state"] == "completed"
 
 
+def test_async_search_document_download_follows_the_same_rules() -> None:
+    """The async transport has its own redirect path, so it needs its own proof."""
+    seen: list[tuple[str, str | None]] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("X-API-Key")))
+        return httpx.Response(302, headers={"location": "https://files.example/x?sig=1"})
+
+    def storage(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("X-API-Key")))
+        return httpx.Response(200, content=b"%PDF")
+
+    async def scenario() -> Any:
+        client = build_async_client(api)
+        client._transport._storage = httpx.AsyncClient(transport=httpx.MockTransport(storage))
+        try:
+            return await client.search.get_search_document("SRCH-1", "ec.pdf")
+        finally:
+            await client.aclose()
+
+    assert asyncio.run(scenario()) == b"%PDF"
+    assert seen[0][1] == TEST_KEY, seen
+    assert seen[1] == ("https://files.example/x?sig=1", None), "the signed URL gets no API key"
+
+
+def test_async_check_connection_reports_each_host() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "legiscore.in":
+            return httpx.Response(200, json={"data": {"balance": 7}})
+        if request.url.path == "/api/v1/credits":
+            return httpx.Response(200, json={"balance": 42})
+        return httpx.Response(200, json=[{"code": "purchase"}])
+
+    async def scenario() -> Any:
+        client = build_async_client(handler)
+        try:
+            return await client.check_connection()
+        finally:
+            await client.aclose()
+
+    report = asyncio.run(scenario())
+    assert report["ok"] is True, report
+    assert report["search"]["ok"] is True, report
+    assert report["search"]["base_url"] == "https://legiscore.in", report
+
+
 def test_async_unkeyed_write_follows_the_same_retry_rule() -> None:
     attempts = {"n": 0}
 
@@ -419,7 +652,7 @@ def test_async_unkeyed_write_follows_the_same_retry_rule() -> None:
     async def scenario() -> None:
         client = build_async_client(handler)
         try:
-            await client.search.submit_raw_search(body={"state": "telangana"})
+            await client.search.submit_search(body={"state": "telangana"})
         except LegiScoreError:
             pass
         finally:

@@ -6,9 +6,10 @@ into, so the agent writes working code on the first attempt instead of after thr
 
 ---
 
-You are integrating **LegiScore** into this codebase. LegiScore produces legal opinion and title
-search reports on Indian property from uploaded documents. Read every rule below before writing
-code. The rules exist because each one has broken a real integration.
+You are integrating **LegiScore** into this codebase. LegiScore produces legal opinion reports on
+Indian property from uploaded documents, and runs government record searches against the state
+portals. Read every rule below before writing code. The rules exist because each one has broken a
+real integration.
 
 ## 1. Install and authenticate
 
@@ -99,10 +100,11 @@ cannot spin forever.
 - **Uploads are three calls, not one.** presign, PUT the bytes to the returned URL, complete. Use
   `client.upload_document(path)`, which does all three and returns a `document_id`. Files go
   straight to storage, so a 90 MB scan never passes through the API.
-- **These three endpoints take file uploads, not JSON**: `translate.translate_docx`,
-  `translate.submit_translation`, `extraction.create_property_extraction`. They take
-  `files={"field": "path.pdf"}` plus keyword form fields.
-- **`download_case_files_zip` returns bytes, not JSON.** Write it to a file.
+- **These four endpoints take file uploads, not JSON**: `translate.translate_docx`,
+  `translate.submit_translation`, `extraction.create_property_extraction` and
+  `search.assist_search`. They take `files={"field": "path.pdf"}` plus keyword form fields.
+- **`download_case_files_zip` and `search.get_search_document` return bytes, not JSON.** Write
+  them to a file.
 - **A 400 on a pause endpoint is not a bug.** It means the case is not in that pause. Dispatch on
   `internal_status`, per section 4.
 - **404 means "not found or not yours".** Deliberately identical, so one tenant cannot probe
@@ -111,9 +113,55 @@ cannot spin forever.
   403 there means asking LegiScore to enable it, not a code bug. The same is true of
   `reports.link_documents_to_missing_slot`.
 
-## 6. Errors
+## 6. Searches are a second product, not part of a report
 
-Every failure raises `LegiScoreError` with `.status_code` and `.body`. Rate limits (429) and
+`client.search` runs one government record search and hands back what the source returned. It is
+not the report flow and does not share its money:
+
+- **Its own credit balance.** `search.get_search_credits()`, not `core.get_credits()`. A search
+  can never spend the credits bought for reports. Out of them is **402** with the code
+  `insufficient_credits`.
+- **Its own host**, which the SDK already points at. Do not build these URLs yourself.
+- **Flat price per search**, stated by `search.get_search_catalog()`. Read it; never hardcode it.
+  Charged when the search is accepted, and returned if the source cannot be reached.
+
+The flow is submit, then poll:
+
+```python
+run = client.search.submit_search(body={"state": "andhra", "search_type": "ec", "params": {...}})
+search_id = run["data"]["searches"][0]["id"]
+
+while (found := client.search.get_search(search_id)["data"]["search"])["status"] not in (
+    "succeeded", "failed", "cancelled"
+):
+    time.sleep(5)
+```
+
+Five rules that are not guessable:
+
+- **`found: false` on a succeeded search is an answer, not a failure.** The source was reached and
+  holds nothing against that property. Do not retry it, and do not report it as an error.
+- **Lookup fields are picked, not typed.** `get_search_catalog()` says which fields a state and
+  search type take and which need a lookup; `get_search_lookups(state=..., dim=...)` returns the
+  values. Spread the option's `meta` into `params` alongside its `value` — those are the codes the
+  source actually keys on.
+- **A batch is not all-or-nothing.** Up to 25 under `searches`. Read `rejected`, which names the
+  index of each item that failed validation; the rest ran.
+- **`replayed` means the source was never touched.** An identical search of yours from the last 24
+  hours answered this one, free. Treat it as a normal result.
+- **`search.get_search_document(search_id, filename)` returns bytes**, with `filename` taken from
+  the search's `documents` list. The API answers with a redirect to a signed URL and the SDK
+  follows it without your key. Never write that fetch yourself: a custom auth header is forwarded
+  across a cross-origin redirect, so following it by hand hands your key to a storage host.
+
+`assist_search` proposes parameters from a document and never submits them; a person confirms
+before you spend a search on them. `recover_search` re-runs a finished search against related
+identifiers and is priced separately. Both are optional; ignore them unless asked.
+
+## 7. Errors
+
+Every failure raises `LegiScoreError` with `.status_code`, `.body` and, when the API sent one,
+`.code` — a stable string such as `insufficient_credits`. Branch on `.code`, never on the message. Rate limits (429) and
 transient 5xx are retried inside the SDK, honouring `Retry-After`, so an error that reaches your
 code has already been retried and failed.
 
@@ -130,12 +178,12 @@ Handle these explicitly and let everything else raise:
 | Code | Meaning | Handling |
 |---|---|---|
 | 401 | key rejected | fail loudly at startup, not per request |
-| 402 | out of credits | alert a human; nothing was charged |
+| 402 | out of credits | alert a human; nothing was charged. On a search, `.code` is `insufficient_credits` |
 | 403 | missing permission | alert a human; not retryable |
 | 422 | bad payload | log `error.body`, it names the field |
 | 429 | sustained overrun | slow the caller down |
 
-## 7. Webhooks instead of polling, when you can
+## 8. Webhooks instead of polling, when you can
 
 Polling works but a webhook is better. **Always verify the signature. Never skip it.**
 
@@ -179,13 +227,13 @@ because nothing can read it back afterwards. A webhook created with any other au
 a server-to-server call is then refused with 403 no matter how valid the key is.
 
 
-## 8. Reference implementation
+## 9. Reference implementation
 
 `python/examples/end_to_end.py` is a complete, runnable version of everything above: connection
 check, upload, create, wait, answer every pause, bounded rounds, fetch the report and the files.
 Read it before writing your own, and adapt it rather than starting from scratch.
 
-## 9. What to build
+## 10. What to build
 
 Unless told otherwise:
 
@@ -194,17 +242,18 @@ Unless told otherwise:
    dispatching on `internal_status` with a bounded loop. It handles the document pauses itself and
    **hands acknowledgements to a human** rather than deciding them.
 3. A webhook endpoint with signature verification, if the app has somewhere to put one.
-4. Real error handling for 401, 402, 403 and 422. No bare `except`.
+4. Real error handling for 401, 402, 403 and 422, branching on `error.code` where the API sends
+   one. No bare `except`.
 5. Structured logs at each state transition, including `case_id`, so a stuck case is diagnosable.
 
 Do not build: a retry layer (the SDK has one), a polling loop faster than 10 seconds, a cache of
 report results without a documented invalidation rule, or your own HTTP calls to endpoints the SDK
 already covers.
 
-## 10. Modules
+## 11. Modules
 
 `client.core` uploads, credits, scenarios, field configs. `client.reports` the case lifecycle.
-`client.search` raw search over the state land-record portals. `client.translate` document
-translation. `client.extraction` property details out of a document. `client.webhooks` manage your
-own delivery endpoints. 38 methods total. Python is snake_case, TypeScript is camelCase; the names
-are otherwise identical.
+`client.search` government record searches, on their own host and their own credits.
+`client.translate` document translation. `client.extraction` property details out of a document.
+`client.webhooks` manage your own delivery endpoints. 42 methods total. Python is snake_case,
+TypeScript is camelCase; the names are otherwise identical.

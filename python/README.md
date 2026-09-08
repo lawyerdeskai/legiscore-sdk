@@ -1,7 +1,7 @@
 # legiscore
 
-Python SDK for the [LegiScore](https://legiscore.in) partner API — title search and legal
-opinion reports on Indian property.
+Python SDK for the [LegiScore](https://legiscore.in) partner API — legal opinion reports and
+government record searches on Indian property.
 
 - **Python 3.10+**, one dependency (`httpx`)
 - **Sync and async**, same method names on both clients
@@ -73,13 +73,43 @@ Endpoints are grouped by module, on both clients:
 |---|---|
 | `client.core` | Credits, scenarios, custom field configs, document uploads |
 | `client.reports` | Cases: create, status, result, files, and every pause/resume step |
-| `client.search` | Raw searches over the state portals, plus the state and lookup catalogues |
+| `client.search` | Government record searches: submit, poll, cancel, documents, catalog, lookups, credits |
 | `client.translate` | Document translation sessions |
 | `client.extraction` | Property extraction from a document |
 | `client.webhooks` | List, create, update, delete and rotate the secret on your webhooks |
 
 The client itself adds the multi-step helpers: `create_report`, `upload_document`,
 `wait_for_case` and `check_connection`.
+
+`client.search` is a second product rather than part of the report flow. It has its own credit
+balance (`search.get_search_credits()`, never `core.get_credits()`), its own flat per-search price
+from `search.get_search_catalog()`, and its own host, which the client already points at:
+
+```python
+run = client.search.submit_search(
+    body={"state": "andhra", "search_type": "ec", "params": {"sro": "...", "doc_no": "1234"}}
+)
+search_id = run["data"]["searches"][0]["id"]
+
+while (found := client.search.get_search(search_id)["data"]["search"])["status"] not in (
+    "succeeded",
+    "failed",
+    "cancelled",
+):
+    time.sleep(5)
+```
+
+Then pull each file the search produced:
+
+```python
+for document in found["documents"]:
+    with open(document["filename"], "wb") as handle:
+        handle.write(client.search.get_search_document(search_id, document["filename"]))
+```
+
+A succeeded search with `found` False means the source was reached and holds nothing against that
+property. That is an answer, not a failure. Running out of search credits raises `LegiScoreError`
+with `status_code` 402 and `code` `"insufficient_credits"`.
 
 ## Concurrency
 
@@ -89,7 +119,8 @@ call `client.close()` / `await client.aclose()` when you are finished, so the po
 
 ## Errors and retries
 
-Failures raise `LegiScoreError`, which carries `.status_code` and `.body`.
+Failures raise `LegiScoreError`, which carries `.status_code`, `.body` and, when the API sent one,
+`.code` — a stable string such as `insufficient_credits`. Branch on `.code`, not on the message.
 
 > `error.body` is the API's reply verbatim and may contain customer data — names, identifiers,
 > document text. Log `error.status_code` and `str(error)`, which carry neither customer data nor
@@ -109,8 +140,13 @@ Backoff is exponential with jitter, honours `Retry-After` in both its seconds an
 and never waits more than a minute between attempts. Three retries is the default; change it with
 `LegiScore(max_retries=...)`.
 
-`base_url` must be `https://` (or `http://localhost` for local development) — the API key travels
-in a header and the SDK refuses to send it unencrypted.
+`base_url` and `search_base_url` must both be `https://` (or `http://localhost` for local
+development) — the API key travels in a header and the SDK refuses to send it unencrypted.
+
+Redirects are never followed on an authenticated request; a 3xx raises rather than returning an
+empty body. `get_search_document` is the one route that answers with a redirect by design, and the
+SDK resolves it on the storage pool, which has no API key on it, refusing any target that is not
+`https`.
 
 ## Verifying webhooks
 
@@ -156,7 +192,13 @@ other auth type sends no `X-LegiScore-Signature` at all, so verification will re
 report = client.check_connection()  # returns a dict, never raises
 if not report["ok"]:
     raise SystemExit(report["problem"])
+if not report["search"]["ok"]:
+    print("Searches unavailable:", report["search"]["problem"])
 ```
+
+The two products run on two hosts and fail independently, usually because a network allows one and
+not the other. `ok` is the reports host; `report["search"]["ok"]` is the search host. Gate on the
+one you are about to use.
 
 ## Dependencies
 

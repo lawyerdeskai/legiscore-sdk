@@ -1,7 +1,7 @@
 # LegiScore SDKs
 
 Official Python and TypeScript clients for the [LegiScore](https://legiscore.in) partner API:
-title search and legal opinion reports on Indian property.
+legal opinion reports and government record searches on Indian property.
 
 ```bash
 pip install legiscore          # Python 3.10+
@@ -53,10 +53,93 @@ One key, six namespaces, identical in both languages (`client.reports.get_case_s
 |---|---|---|
 | `core` | 5 | Uploads, credit balance, scenarios, custom field configs |
 | `reports` | 13 | Case lifecycle, the three review pauses, case documents |
-| `search` | 7 | Raw search across the state land-record portals |
+| `search` | 11 | Government record searches: submit, poll, cancel, documents, catalog, lookups, credits |
 | `translate` | 6 | Document translation |
 | `extraction` | 2 | Structured property details out of a document |
 | `webhooks` | 5 | Manage your own delivery endpoints, including rotating the secret |
+
+## Searches
+
+`client.search` is the second product, not a helper on the first. It has its own credit balance,
+its own flat per-search price, and its own host, which the SDK already points at. Submit a search,
+poll it, read the records and the documents the source issued.
+
+```python
+import time
+from pathlib import Path
+
+from legiscore import LegiScore
+
+client = LegiScore()
+
+# Lookup fields are picked, never typed. getSearchCatalog names the dimension for each field.
+office = client.search.get_search_lookups(state="andhra", dim="sro")["data"]["options"][0]
+
+run = client.search.submit_search(body={
+    "state": "andhra",
+    "search_type": "ec",
+    "params": {"sro": office["value"], **office["meta"], "doc_no": "1234", "year": "2018"},
+})
+search_id = run["data"]["searches"][0]["id"]
+
+while True:
+    found = client.search.get_search(search_id)["data"]["search"]
+    if found["status"] in ("succeeded", "failed", "cancelled"):
+        break
+    time.sleep(5)
+
+print(found["found"], found["record_count"])
+
+for document in found["documents"]:
+    # Answered with a redirect to a signed URL, which the SDK follows without your key.
+    Path(document["filename"]).write_bytes(
+        client.search.get_search_document(search_id, document["filename"])
+    )
+```
+
+```ts
+type Search = { id: string; status: string; found: boolean | null; record_count: number | null };
+type Options = { data: { options: { value: string; meta: Record<string, string> }[] } };
+
+const [office] = ((await client.search.getSearchLookups({
+  state: "andhra",
+  dim: "sro",
+})) as Options).data.options;
+
+const run = (await client.search.submitSearch({
+  state: "andhra",
+  search_type: "ec",
+  params: { sro: office.value, ...office.meta, doc_no: "1234", year: "2018" },
+})) as { data: { searches: Search[] } };
+
+let search = run.data.searches[0];
+while (!["succeeded", "failed", "cancelled"].includes(search.status)) {
+  await new Promise((resolve) => setTimeout(resolve, 5_000));
+  search = ((await client.search.getSearch(search.id)) as { data: { search: Search } }).data.search;
+}
+
+console.log(search.found, search.record_count);
+
+const [document] = ((await client.search.getSearch(search.id)) as {
+  data: { search: { documents: { filename: string }[] } };
+}).data.search.documents;
+// Answered with a redirect to a signed URL, which the SDK follows without your key.
+const bytes = (await client.search.getSearchDocument(search.id, document.filename)) as Uint8Array;
+```
+
+Five things that are not guessable:
+
+- **Search credits are a separate balance** from the report credits `getCredits` returns. Read them
+  with `getSearchCredits`. Running out returns **402** with the code `insufficient_credits`.
+- **Price comes from `getSearchCatalog`**, flat per search. Charged when a search is accepted and
+  returned if the source cannot be reached. Do not hardcode the number.
+- **`found: false` on a succeeded search is an answer**, not a failure: the source was reached and
+  holds nothing against that property.
+- **A batch is not all-or-nothing.** Send up to 25 under `searches` and read `rejected` for the
+  items that did not validate; the rest still ran.
+- **`getSearchDocument` returns bytes.** The API answers with a redirect to a signed URL, and the
+  SDK follows it on a connection that carries no API key. Do not build that fetch yourself: a
+  custom auth header **is** forwarded across a cross-origin redirect.
 
 ## Helpers
 
@@ -95,8 +178,10 @@ an empty secret fails closed.
 
 ## Errors and retries
 
-Failures raise `LegiScoreError` with the status and decoded body. **Do not wrap writes in your own
-retry loop.** The built-in policy is asymmetric on purpose: reads replay freely, while a write
+Failures raise `LegiScoreError` with the status, the decoded body and, when the API sent one, a
+stable `code` such as `insufficient_credits`. Branch on the code, not the message.
+
+**Do not wrap writes in your own retry loop.** The built-in policy is asymmetric on purpose: reads replay freely, while a write
 replays only when the server can recognise the repeat — creating a case and completing an upload
 carry an idempotency key across the retries of one call, and every other write replays only on a
 status that proves the server refused it before running it. Adding a retry layer on top

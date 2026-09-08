@@ -246,10 +246,10 @@ DROPPED_PROPERTIES: dict[str, tuple[str, ...]] = {
         "on_behalf_draft_id",
         "share_with_profile_ids",
     ),
+    # Raw search left the partner surface in 0.2.0, so neither of these schemas reaches the
+    # spec today. Both entries stay as the guard: if either route ever rejoins the partner
+    # surface, the field must not come back with it.
     "UnifiedRawSearchRequest": ("auto_start_profile_id",),
-    # The title-search operations are not in PARTNER_OPERATIONS, so this schema does not
-    # reach the spec today. The entry stays as the guard: whenever those routes rejoin the
-    # partner surface, this field must not come back with them.
     "TitleSearchStartRequest": ("payment_status",),
     "Body_submit_translation_api_v1_translate_submit_post": (
         "subtotal",
@@ -264,9 +264,30 @@ DROPPED_HEADER_PARAMS = {"x-admin-key", "x-active-org-id"}
 
 DESCRIPTION_KEYS = ("description", "summary")
 
+# The keys of a Path Item Object that are operations. Anything else on a path -- `servers`,
+# `parameters`, `$ref` -- is passed through untouched: it holds no upstream prose to strip and
+# no operationId to look a curated description up by.
+HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
+
 # OpenAPI requires a description on every Response Object, so it cannot simply be dropped.
-# It is rewritten to a fixed value instead of being carried over from upstream.
-RESPONSE_DESCRIPTIONS = {"422": "Validation Error"}
+# It is rewritten from this table instead of being carried over from upstream: a partner
+# reading "Successful Response" against a 402 would be reading upstream noise, not a contract.
+RESPONSE_DESCRIPTIONS = {
+    "202": "Accepted",
+    "302": "Found",
+    "400": "Bad Request",
+    "401": "Unauthorized",
+    "402": "Payment Required",
+    "403": "Forbidden",
+    "404": "Not Found",
+    "409": "Conflict",
+    "422": "Validation Error",
+    "429": "Too Many Requests",
+    "500": "Server Error",
+    "502": "Bad Gateway",
+    "503": "Service Unavailable",
+}
+DEFAULT_RESPONSE_DESCRIPTION = "Successful Response"
 
 
 def _strip_prose(node: Any) -> Any:
@@ -296,7 +317,7 @@ def sanitize_operation(operation: dict, operation_id: str, curated: dict) -> dic
     clean = _strip_prose(operation)
 
     for code, response in (clean.get("responses") or {}).items():
-        response["description"] = RESPONSE_DESCRIPTIONS.get(code, "Successful Response")
+        response["description"] = RESPONSE_DESCRIPTIONS.get(code, DEFAULT_RESPONSE_DESCRIPTION)
 
     parameters = []
     for parameter in clean.get("parameters", []):
@@ -350,8 +371,12 @@ def sanitize_partner_surface(
     """Sanitise the whitelisted paths and their schemas. Returns (paths, schemas)."""
     clean_paths = {
         path: {
-            method: sanitize_operation(operation, operation["operationId"], curated)
-            for method, operation in methods.items()
+            key: (
+                sanitize_operation(value, value["operationId"], curated)
+                if key in HTTP_METHODS
+                else value
+            )
+            for key, value in methods.items()
         }
         for path, methods in paths.items()
     }
@@ -364,6 +389,7 @@ def missing_descriptions(paths: dict[str, dict], curated: dict) -> list[str]:
     return sorted(
         operation["operationId"]
         for methods in paths.values()
-        for operation in methods.values()
-        if not curated["operations"].get(operation["operationId"], {}).get("description")
+        for method, operation in methods.items()
+        if method in HTTP_METHODS
+        and not curated["operations"].get(operation["operationId"], {}).get("description")
     )

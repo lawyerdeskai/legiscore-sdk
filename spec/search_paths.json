@@ -1,0 +1,1097 @@
+{
+  "_readme": [
+    "Hand-authored OpenAPI fragment for the paid search module.",
+    "",
+    "The rest of the partner spec is selected out of an upstream API description. These routes",
+    "have none, so their shapes are written here and build_spec.py merges this file into the",
+    "source before the whitelist runs. Everything else is unchanged: the operations still have to",
+    "appear in PARTNER_OPERATIONS, the sanitiser still strips prose, and every description still",
+    "comes from descriptions.json.",
+    "",
+    "Rules for editing: no descriptions or summaries here (they would be stripped anyway, so a",
+    "reader would be looking at text that never ships). Prices are not written down; the catalog",
+    "endpoint states them. Keep the shapes to what the API actually returns.",
+    "",
+    "A `302` response is load-bearing, not documentation: the client generator reads it and emits",
+    "a download call, which resolves the redirect with a client that carries no API key."
+  ],
+
+  "paths": {
+    "/api/v1/search": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitSearchRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SubmitSearchResponse" }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "title": "Limit" }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0, "default": 0, "title": "Offset" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "$ref": "#/components/schemas/SearchStatus" }, { "type": "null" }],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Batch Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchListResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/{search_id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Search Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Search Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CancelSearchResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/{search_id}/otp": {
+      "post": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Search Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitSearchOtpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchOtpResponse" }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/{search_id}/recover": {
+      "post": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Search Id" }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RecoverSearchResponse" }
+              }
+            }
+          },
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RecoverSearchResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/{search_id}/documents/{filename}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "search_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Search Id" }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Filename" }
+          }
+        ],
+        "responses": {
+          "302": {
+            "headers": {
+              "Location": { "schema": { "type": "string", "format": "uri" } }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/assist": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/SearchAssistForm" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchAssistResponse" }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/credits": {
+      "get": {
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20, "title": "Limit" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchCreditsResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/catalog": {
+      "get": {
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "State" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchCatalogResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/search/lookups": {
+      "get": {
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "default": "andhra", "title": "State" }
+          },
+          {
+            "name": "dim",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "title": "Dim" }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Q" }
+          },
+          {
+            "name": "district",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "District" }
+          },
+          {
+            "name": "mandal",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Mandal" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 500, "title": "Limit" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchLookupsResponse" }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SearchErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "schemas": {
+    "SearchStatus": {
+      "type": "string",
+      "enum": ["queued", "running", "awaiting_otp", "succeeded", "failed", "cancelled"],
+      "title": "Search Status"
+    },
+
+    "SearchItem": {
+      "type": "object",
+      "required": ["state", "search_type", "params"],
+      "properties": {
+        "state": { "type": "string", "title": "State" },
+        "search_type": { "type": "string", "title": "Search Type" },
+        "params": { "type": "object", "additionalProperties": true, "title": "Params" },
+        "label": {
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }],
+          "title": "Label"
+        }
+      },
+      "title": "Search Item"
+    },
+
+    "SubmitSearchRequest": {
+      "type": "object",
+      "properties": {
+        "state": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "State" },
+        "search_type": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "title": "Search Type"
+        },
+        "params": {
+          "anyOf": [{ "type": "object", "additionalProperties": true }, { "type": "null" }],
+          "title": "Params"
+        },
+        "label": {
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }],
+          "title": "Label"
+        },
+        "searches": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/SearchItem" },
+              "minItems": 1,
+              "maxItems": 25
+            },
+            { "type": "null" }
+          ],
+          "title": "Searches"
+        }
+      },
+      "title": "Submit Search Request"
+    },
+
+    "SearchDocument": {
+      "type": "object",
+      "required": ["filename", "content_type", "bytes"],
+      "properties": {
+        "filename": { "type": "string", "title": "Filename" },
+        "content_type": { "type": "string", "title": "Content Type" },
+        "bytes": { "type": "integer", "title": "Bytes" }
+      },
+      "title": "Search Document"
+    },
+
+    "SearchFailure": {
+      "type": "object",
+      "properties": {
+        "kind": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Kind" },
+        "message": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Message" }
+      },
+      "title": "Search Failure"
+    },
+
+    "Search": {
+      "type": "object",
+      "required": ["id", "state", "search_type", "status", "credits_charged"],
+      "properties": {
+        "id": { "type": "string", "title": "Id" },
+        "state": { "type": "string", "title": "State" },
+        "search_type": { "type": "string", "title": "Search Type" },
+        "label": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Label" },
+        "status": { "$ref": "#/components/schemas/SearchStatus" },
+        "progress": { "type": "number", "title": "Progress" },
+        "note": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Note" },
+        "found": { "anyOf": [{ "type": "boolean" }, { "type": "null" }], "title": "Found" },
+        "records": {
+          "anyOf": [{ "type": "array", "items": {} }, { "type": "null" }],
+          "title": "Records"
+        },
+        "record_count": {
+          "anyOf": [{ "type": "integer" }, { "type": "null" }],
+          "title": "Record Count"
+        },
+        "documents": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchDocument" },
+          "title": "Documents"
+        },
+        "error": {
+          "anyOf": [{ "$ref": "#/components/schemas/SearchFailure" }, { "type": "null" }],
+          "title": "Error"
+        },
+        "credits_charged": { "type": "number", "title": "Credits Charged" },
+        "refunded": { "type": "boolean", "title": "Refunded" },
+        "params": { "type": "object", "additionalProperties": true, "title": "Params" },
+        "replayed": { "type": "boolean", "title": "Replayed" },
+        "batch_id": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Batch Id" },
+        "recovery_of": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "title": "Recovery Of"
+        },
+        "source": { "type": "string", "enum": ["ui", "api"], "title": "Source" },
+        "created_at": { "type": "string", "format": "date-time", "title": "Created At" },
+        "completed_at": {
+          "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }],
+          "title": "Completed At"
+        }
+      },
+      "title": "Search"
+    },
+
+    "RejectedSearch": {
+      "type": "object",
+      "required": ["index", "code", "message"],
+      "properties": {
+        "index": { "type": "integer", "title": "Index" },
+        "code": { "type": "string", "title": "Code" },
+        "message": { "type": "string", "title": "Message" }
+      },
+      "title": "Rejected Search"
+    },
+
+    "ReplayCounts": {
+      "type": "object",
+      "required": ["free", "billed"],
+      "properties": {
+        "free": { "type": "integer", "title": "Free" },
+        "billed": { "type": "integer", "title": "Billed" }
+      },
+      "title": "Replay Counts"
+    },
+
+    "SubmitSearchResult": {
+      "type": "object",
+      "required": ["searches", "rejected", "replayed", "credits_charged", "batch_id"],
+      "properties": {
+        "searches": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/Search" },
+          "title": "Searches"
+        },
+        "rejected": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/RejectedSearch" },
+          "title": "Rejected"
+        },
+        "replayed": { "$ref": "#/components/schemas/ReplayCounts" },
+        "credits_charged": { "type": "number", "title": "Credits Charged" },
+        "batch_id": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Batch Id" }
+      },
+      "title": "Submit Search Result"
+    },
+
+    "SubmitSearchResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": { "data": { "$ref": "#/components/schemas/SubmitSearchResult" } },
+      "title": "Submit Search Response"
+    },
+
+    "SearchResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["search"],
+          "properties": { "search": { "$ref": "#/components/schemas/Search" } },
+          "title": "Data"
+        }
+      },
+      "title": "Search Response"
+    },
+
+    "CancelSearchResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["search", "cancelling"],
+          "properties": {
+            "search": { "$ref": "#/components/schemas/Search" },
+            "cancelling": { "type": "boolean", "title": "Cancelling" }
+          },
+          "title": "Data"
+        }
+      },
+      "title": "Cancel Search Response"
+    },
+
+    "SearchListResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["searches", "total", "limit", "offset"],
+          "properties": {
+            "searches": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/Search" },
+              "title": "Searches"
+            },
+            "total": { "type": "integer", "title": "Total" },
+            "limit": { "type": "integer", "title": "Limit" },
+            "offset": { "type": "integer", "title": "Offset" }
+          },
+          "title": "Data"
+        }
+      },
+      "title": "Search List Response"
+    },
+
+    "SubmitSearchOtpRequest": {
+      "type": "object",
+      "required": ["otp"],
+      "properties": {
+        "otp": { "type": "string", "pattern": "^\\d{4,8}$", "title": "Otp" }
+      },
+      "title": "Submit Search Otp Request"
+    },
+
+    "SearchOtpResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["accepted"],
+          "properties": { "accepted": { "type": "boolean", "title": "Accepted" } },
+          "title": "Data"
+        }
+      },
+      "title": "Search Otp Response"
+    },
+
+    "RecoverSearchResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["recovered", "credits_charged"],
+          "properties": {
+            "recovered": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/Search" },
+              "title": "Recovered"
+            },
+            "reasoning": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Reasoning"
+            },
+            "rationales": {
+              "type": "array",
+              "items": { "type": "string" },
+              "title": "Rationales"
+            },
+            "credits_charged": { "type": "number", "title": "Credits Charged" },
+            "message": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Message" }
+          },
+          "title": "Data"
+        }
+      },
+      "title": "Recover Search Response"
+    },
+
+    "SearchAssistForm": {
+      "type": "object",
+      "properties": {
+        "file": { "type": "string", "format": "binary", "title": "File" },
+        "state": { "type": "string", "default": "andhra", "title": "State" },
+        "text": { "type": "string", "title": "Text" }
+      },
+      "title": "Search Assist Form"
+    },
+
+    "SearchAssistField": {
+      "type": "object",
+      "required": ["name", "value", "confidence"],
+      "properties": {
+        "name": { "type": "string", "title": "Name" },
+        "value": { "title": "Value" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1, "title": "Confidence" }
+      },
+      "title": "Search Assist Field"
+    },
+
+    "SearchAssistExtraction": {
+      "type": "object",
+      "required": ["fields"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchAssistField" },
+          "title": "Fields"
+        },
+        "state": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "State" },
+        "search_type": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "title": "Search Type"
+        }
+      },
+      "title": "Search Assist Extraction"
+    },
+
+    "SearchAssistResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["extraction", "credits_charged"],
+          "properties": {
+            "extraction": { "$ref": "#/components/schemas/SearchAssistExtraction" },
+            "needs_review": { "type": "boolean", "title": "Needs Review" },
+            "credits_charged": { "type": "number", "title": "Credits Charged" },
+            "message": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Message" }
+          },
+          "title": "Data"
+        }
+      },
+      "title": "Search Assist Response"
+    },
+
+    "SearchPricing": {
+      "type": "object",
+      "required": ["search", "ai_assist", "ai_recovery"],
+      "properties": {
+        "search": { "type": "integer", "title": "Search" },
+        "ai_assist": { "type": "integer", "title": "Ai Assist" },
+        "ai_recovery": { "type": "integer", "title": "Ai Recovery" },
+        "currency": { "type": "string", "title": "Currency" },
+        "credits_per_rupee": { "type": "integer", "title": "Credits Per Rupee" }
+      },
+      "title": "Search Pricing"
+    },
+
+    "SearchLedgerEntry": {
+      "type": "object",
+      "required": ["type", "amount", "balance_after", "at"],
+      "properties": {
+        "type": { "type": "string", "title": "Type" },
+        "amount": { "type": "number", "title": "Amount" },
+        "balance_after": { "type": "number", "title": "Balance After" },
+        "cost_key": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Cost Key" },
+        "note": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Note" },
+        "at": { "type": "string", "format": "date-time", "title": "At" }
+      },
+      "title": "Search Ledger Entry"
+    },
+
+    "SearchCredits": {
+      "type": "object",
+      "required": ["scope", "balance", "spendable", "pricing", "ledger"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["organization", "personal"],
+          "title": "Scope"
+        },
+        "balance": { "type": "number", "title": "Balance" },
+        "spendable": { "type": "number", "title": "Spendable" },
+        "postpaid": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean", "title": "Enabled" },
+            "limit": { "type": "number", "title": "Limit" }
+          },
+          "title": "Postpaid"
+        },
+        "pricing": { "$ref": "#/components/schemas/SearchPricing" },
+        "ledger": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchLedgerEntry" },
+          "title": "Ledger"
+        }
+      },
+      "title": "Search Credits"
+    },
+
+    "SearchCreditsResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": { "data": { "$ref": "#/components/schemas/SearchCredits" } },
+      "title": "Search Credits Response"
+    },
+
+    "SearchCatalogFieldOption": {
+      "type": "object",
+      "required": ["value", "label"],
+      "properties": {
+        "value": { "type": "string", "title": "Value" },
+        "label": { "type": "string", "title": "Label" }
+      },
+      "title": "Search Catalog Field Option"
+    },
+
+    "SearchCatalogFieldLookup": {
+      "type": "object",
+      "required": ["dim"],
+      "properties": {
+        "dim": { "type": "string", "title": "Dim" },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string" },
+          "title": "Dependson"
+        }
+      },
+      "title": "Search Catalog Field Lookup"
+    },
+
+    "SearchCatalogField": {
+      "type": "object",
+      "required": ["name", "label", "type", "required"],
+      "properties": {
+        "name": { "type": "string", "title": "Name" },
+        "label": { "type": "string", "title": "Label" },
+        "type": {
+          "type": "string",
+          "enum": ["lookup", "text", "tags", "select", "year"],
+          "title": "Type"
+        },
+        "required": { "type": "boolean", "title": "Required" },
+        "help": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Help" },
+        "options": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/SearchCatalogFieldOption" }
+            },
+            { "type": "null" }
+          ],
+          "title": "Options"
+        },
+        "lookup": {
+          "anyOf": [
+            { "$ref": "#/components/schemas/SearchCatalogFieldLookup" },
+            { "type": "null" }
+          ],
+          "title": "Lookup"
+        }
+      },
+      "title": "Search Catalog Field"
+    },
+
+    "SearchCatalogRule": {
+      "type": "object",
+      "required": ["fields", "message"],
+      "properties": {
+        "fields": { "type": "array", "items": { "type": "string" }, "title": "Fields" },
+        "message": { "type": "string", "title": "Message" }
+      },
+      "title": "Search Catalog Rule"
+    },
+
+    "SearchCatalogEntry": {
+      "type": "object",
+      "required": ["state", "search_type", "label", "credits", "fields"],
+      "properties": {
+        "state": { "type": "string", "title": "State" },
+        "search_type": { "type": "string", "title": "Search Type" },
+        "label": { "type": "string", "title": "Label" },
+        "blurb": { "type": "string", "title": "Blurb" },
+        "yields": { "type": "string", "title": "Yields" },
+        "credits": { "type": "integer", "title": "Credits" },
+        "typical_seconds": { "type": "integer", "title": "Typical Seconds" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchCatalogField" },
+          "title": "Fields"
+        },
+        "one_of": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchCatalogRule" },
+          "title": "One Of"
+        }
+      },
+      "title": "Search Catalog Entry"
+    },
+
+    "SearchCatalog": {
+      "type": "object",
+      "required": ["live_states", "pricing", "source", "searches"],
+      "properties": {
+        "live_states": { "type": "array", "items": { "type": "string" }, "title": "Live States" },
+        "pricing": { "$ref": "#/components/schemas/SearchPricing" },
+        "source": {
+          "type": "object",
+          "required": ["status", "checked_at"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["operational", "unavailable"],
+              "title": "Status"
+            },
+            "checked_at": { "type": "string", "format": "date-time", "title": "Checked At" }
+          },
+          "title": "Source"
+        },
+        "searches": {
+          "type": "array",
+          "items": { "$ref": "#/components/schemas/SearchCatalogEntry" },
+          "title": "Searches"
+        }
+      },
+      "title": "Search Catalog"
+    },
+
+    "SearchCatalogResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": { "data": { "$ref": "#/components/schemas/SearchCatalog" } },
+      "title": "Search Catalog Response"
+    },
+
+    "SearchLookupOption": {
+      "type": "object",
+      "required": ["value", "label"],
+      "properties": {
+        "value": { "type": "string", "title": "Value" },
+        "label": { "type": "string", "title": "Label" },
+        "meta": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "title": "Meta"
+        }
+      },
+      "title": "Search Lookup Option"
+    },
+
+    "SearchLookupsResponse": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["options"],
+          "properties": {
+            "options": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/SearchLookupOption" },
+              "title": "Options"
+            }
+          },
+          "title": "Data"
+        }
+      },
+      "title": "Search Lookups Response"
+    },
+
+    "SearchErrorResponse": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string", "title": "Code" },
+            "message": { "type": "string", "title": "Message" }
+          },
+          "title": "Error"
+        }
+      },
+      "title": "Search Error Response"
+    }
+  }
+}

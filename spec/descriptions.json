@@ -88,33 +88,49 @@
       "description": "Download the report for a case in the requested format. Ownership is enforced against your key: another organisation's case is reported as not found rather than as forbidden."
     },
 
-    "submitRawSearch": {
-      "summary": "Submit a raw search",
-      "description": "Queue one search against one state portal and return a job id immediately. Takes the state slug, the search type slug and the parameters that search needs; use getSearchCatalog to discover which parameters a given state and search type accept. Poll getRawSearchStatus for the outcome."
+    "submitSearch": {
+      "summary": "Submit a search",
+      "description": "Run one government record search, or up to 25 in one call. Send state, search_type and the params that pair needs, or a searches array of the same fields with an optional label per item. Returns 202 with the accepted searches, each carrying the id you poll, plus rejected for any item that failed validation, credits_charged for the run and a batch_id when more than one search was accepted. A batch runs the items that validated rather than failing as a whole. Search credits are a separate balance from the report credits getCredits returns: they are priced flat per search at the rate getSearchCatalog states, charged when a search is accepted, and returned if the source cannot be reached. Too few of them returns 402 with the code insufficient_credits. An identical search already run on your account within the last 24 hours is answered from that result instead of the source, and replayed counts how many were."
     },
-    "getRawSearchStatus": {
-      "summary": "Get raw search status",
-      "description": "Poll a raw search job. Returns its state and, once finished, the extracted result plus freshly signed URLs for any documents the portal returned."
+    "listSearches": {
+      "summary": "List your searches",
+      "description": "List the searches on your account, newest first, with limit and offset paging and optional filters on status and batch_id. Each entry is the same shape getSearch returns, and anything still in flight is refreshed on the way past, so listing doubles as polling. Returns the page plus the total count."
     },
-    "listRawSearches": {
-      "summary": "List raw searches",
-      "description": "List your recent raw searches, newest first, with optional filters on state, search type and status. Set include_extras to also get the parameters each search ran with and a summary of its result."
+    "getSearch": {
+      "summary": "Get one search",
+      "description": "Poll one search. Returns its status (queued, running, awaiting_otp, succeeded, failed or cancelled), a progress figure, and once it settles the found verdict, the extracted records and the documents the source issued. A succeeded search with found false means the source was reached and had nothing on record against the property, which is a result rather than a failure. credits_charged and refunded say what this search actually cost."
     },
-    "listSearchStates": {
-      "summary": "List searchable states",
-      "description": "List the states raw search currently covers, as the slugs the other search calls expect."
+    "cancelSearch": {
+      "summary": "Cancel a search",
+      "description": "Ask a search that is still in flight to stop. Returns the search as it stands, with cancelling true; the settled status arrives on a later poll, and the credits are returned if it never completed. A search that has already succeeded, failed or been cancelled returns 409 rather than being cancelled twice."
+    },
+    "submitSearchOtp": {
+      "summary": "Supply a one-time password",
+      "description": "Hand a one-time password to a search whose status is awaiting_otp, as 4 to 8 digits in otp. Returns accepted true once it has been passed on. A search in any other status returns 409. Most searches never reach this state; it exists for the case where the source sends its code to a number you hold."
+    },
+    "recoverSearch": {
+      "summary": "Recover an incomplete search",
+      "description": "Re-run a finished search against related identifiers, for when the first attempt came back with less than expected. Takes no body: it reads what did come back and works out what else is worth asking. Returns 202 with the additional searches it started and the reasoning behind them. Priced separately from a plain search, at the rate getSearchCatalog states, and nothing is charged when the source is unreachable or when the analysis finds nothing defensible to try. Only a search that has succeeded or failed can be recovered, and a recovery run cannot itself be recovered."
+    },
+    "assistSearch": {
+      "summary": "Propose search parameters from a document",
+      "description": "Read a document and propose the parameters for a search, without running one. Send multipart/form-data with a file (PDF, PNG, JPEG or WebP, under 20 MB) or a text field, plus the state. Returns the extracted fields, each with a confidence, and needs_review when any of them is low. It deliberately never submits: a wrong survey number does not fail loudly, it searches a different property and returns a confident, wrong result, so a person confirms first. Priced separately at the rate getSearchCatalog states, and a document nothing could be read from costs nothing."
+    },
+    "getSearchDocument": {
+      "summary": "Download a document from a search",
+      "description": "Download one of the files a search produced, named by the filename getSearch reports under documents. The API answers with a redirect to a signed URL that expires in an hour; the SDK follows it for you on a connection that carries no API key, and hands you the bytes. The response is binary, not JSON. The file is looked up in the search's own document list rather than from the path, so a filename that is not on this search is reported as not found, and one that belongs to another account is reported the same way."
+    },
+    "getSearchCredits": {
+      "summary": "Get your search credit balance",
+      "description": "Return your search credit balance, how much of it is currently spendable, whether it is personal or your organisation's, the current prices and the most recent movements against it. This balance is separate from the report credits getCredits returns, so a run of searches can never spend the credits bought to produce legal opinion reports."
     },
     "getSearchCatalog": {
       "summary": "Get the search catalog",
-      "description": "Return the full catalog of searches: every state, the search types available in it, and the input schema each one accepts. This is the reference you build a search form or a parameter mapping from."
+      "description": "Return everything that can be searched: the states that are live, every search type within them, the fields each one takes and which are required, what a result yields, how long it usually takes and the current price per search. It also reports whether the government source is reachable right now. This call needs no key, so it is the reference you build a search form or a parameter mapping from before you have one."
     },
-    "listLookupDimensions": {
-      "summary": "List lookup dimensions",
-      "description": "List the (state, dimension) pairs that have a lookup table behind them, for example districts or sub-registrar offices. Use it to discover what getLookupValues can be asked for."
-    },
-    "getLookupValues": {
-      "summary": "Get lookup values",
-      "description": "Return the valid values for one lookup dimension in one state, so a search parameter can be picked from a list instead of typed."
+    "getSearchLookups": {
+      "summary": "Resolve a lookup to its codes",
+      "description": "Resolve names to the codes a search parameter needs, one dimension at a time: districts, mandals, villages, sub-registrar offices and the rest. Pass dim, plus the district or mandal already chosen where the dimension is nested, and q to narrow by name. Returns the matching options, each with the codes to send in params. getSearchCatalog names the dimension every lookup field uses."
     },
 
     "submitTranslation": {
@@ -187,13 +203,60 @@
     "CreateCaseRequest.documentIds": "Document ids from completeUpload. Always an array, even for one document. Each is checked to belong to your key before anything is charged.",
     "CreateCaseRequest.propertyFocus": "The property the case is about. An object, not a string: at minimum a property type, the state and a free-form property_details bag holding survey number, village, district, house number and anything else the state's portals need.",
 
-    "UnifiedRawSearchRequest.credit_source_org_id": "Optional. Charge this search to a specific organisation's credit pool. The server validates that your key is entitled to that pool; omit it and the right pool is chosen for you.",
-    "UnifiedRawSearchRequest.credit_source_branch_id": "Optional. Charge this search to a specific branch's credit pool. The server validates the branch against your key; omit it and the right pool is chosen for you.",
-    "UnifiedRawSearchRequest.state": "State slug, for example 'andhra'. Must be one of the slugs listSearchStates returns.",
-    "UnifiedRawSearchRequest.search_type": "Search type slug, for example 'ec' or 'index2'. Must be one the catalog lists for that state.",
-    "UnifiedRawSearchRequest.params": "The parameters this state and search type require, validated against the input schema the catalog publishes for that pair.",
-    "UnifiedRawSearchRequest.param_labels": "Optional display text for each parameter key, so a saved search can be shown back with names rather than codes.",
-    "UnifiedRawSearchRequest.force": "Re-run the search rather than reusing a recent identical one. A forced run is charged again.",
+    "SubmitSearchRequest": "Either one search inline (state, search_type, params) or a batch under searches. Sending both is unnecessary; the batch form wins.",
+    "SubmitSearchRequest.state": "State slug, for example 'andhra'. One of the slugs getSearchCatalog lists.",
+    "SubmitSearchRequest.search_type": "Search type slug, for example 'ec' or 'index2'. One of those the catalog lists for that state.",
+    "SubmitSearchRequest.params": "The fields this state and search type need, already resolved to the codes getSearchLookups returns for every lookup field.",
+    "SubmitSearchRequest.label": "Your own name for this search, echoed back on every read. Useful for matching a result to your own reference.",
+    "SubmitSearchRequest.searches": "Up to 25 searches to run in one call, each with its own state, search_type, params and optional label. Items that fail validation come back under rejected; the rest still run.",
+
+    "SearchItem.state": "State slug, one of those getSearchCatalog lists.",
+    "SearchItem.search_type": "Search type slug, one of those the catalog lists for that state.",
+    "SearchItem.params": "The fields this state and search type need, already resolved to the codes getSearchLookups returns for every lookup field.",
+    "SearchItem.label": "Your own name for this search, echoed back on every read.",
+
+    "Search": "One search and everything known about it so far. The same shape comes back from submitSearch, getSearch and listSearches.",
+    "Search.id": "The id to poll and to quote to us. Stable for the life of the search.",
+    "Search.status": "queued and running mean keep polling. awaiting_otp means the source asked for a one-time password; see submitSearchOtp. succeeded, failed and cancelled are settled and will not change.",
+    "Search.found": "Null until the search settles. False on a succeeded search means the source was reached and holds nothing against this property, which is an answer rather than a failure.",
+    "Search.records": "The rows the source returned, in the shape that source publishes them. Null until the search settles.",
+    "Search.documents": "The files the source issued, by name, type and size. Pass a filename to getSearchDocument to fetch the bytes.",
+    "Search.credits_charged": "What this search actually cost. Zero on a search answered from an identical recent run of your own.",
+    "Search.refunded": "True when the charge has been returned, which happens when the source could not be reached or the search was cancelled before it completed.",
+    "Search.replayed": "True when an identical search run on your account in the last 24 hours answered this one instead of the source. A property of this response, not of the search: the same search read back later reports false.",
+    "Search.recovery_of": "The id of the search this one was started from by recoverSearch, or null for a search you submitted yourself.",
+    "Search.error": "Why a failed search failed. Null on every other status.",
+    "Search.progress": "How far along the search is, from 0 to 1. Indicative only; poll status for the decision.",
+    "Search.source": "Whether this search was submitted through the API or run from the dashboard. Both spend the same credits.",
+
+    "SubmitSearchResult.searches": "The searches that were accepted, each with the id to poll.",
+    "SubmitSearchResult.rejected": "Items that never started, by their index in your request, with the reason. A batch is not all-or-nothing.",
+    "SubmitSearchResult.replayed": "How many of the accepted searches were answered from an identical recent run rather than from the source: free when you were the one repeating it, billed when a colleague on the account asked first.",
+    "SubmitSearchResult.credits_charged": "What this call spent in total. Excludes anything answered free from your own earlier run.",
+    "SubmitSearchResult.batch_id": "Groups the searches this call started, so listSearches can filter to them. Null when only one search was charged.",
+
+    "SubmitSearchOtpRequest.otp": "The one-time password the source asked for: 4 to 8 digits.",
+
+    "SearchAssistForm.file": "The document to read: PDF, PNG, JPEG or WebP, under 20 MB. Send this or text.",
+    "SearchAssistForm.state": "Which state's fields to propose values for.",
+    "SearchAssistForm.text": "Document text, if you have already extracted it. An alternative to file, not an addition.",
+
+    "SearchCredits.scope": "Whether this balance belongs to you personally or to your organisation. A key always spends the balance its own workspace owns.",
+    "SearchCredits.balance": "Credits held.",
+    "SearchCredits.spendable": "What can actually be spent right now, which is the balance plus any postpaid headroom.",
+    "SearchCredits.ledger": "The most recent movements against the balance, newest first.",
+
+    "SearchCatalogEntry.credits": "What one run of this search costs. The one price to read; do not hardcode it.",
+    "SearchCatalogEntry.fields": "Every field this search takes, in the order a form should ask for them. A field with a lookup must be filled from getSearchLookups, not typed.",
+    "SearchCatalogEntry.one_of": "Groups where at least one of the named fields must be given. The message says what to tell a person who gives none of them.",
+    "SearchCatalogEntry.typical_seconds": "Roughly how long this search takes when the source is healthy. Size your polling against it.",
+
+    "SearchCatalogField.lookup": "The dimension to pass to getSearchLookups for this field, and which fields must be chosen before it can be asked.",
+
+    "SearchLookupOption.value": "The value to send in params for this field.",
+    "SearchLookupOption.meta": "Extra codes that belong with this choice. Spread them into params alongside the value.",
+
+    "SearchErrorResponse.error": "Every search failure has this shape. code is stable and safe to branch on; message is for a person.",
 
     "Body_submit_translation_api_v1_translate_submit_post.user_id": "The user this translation is filed under. Required by the endpoint and validated against your key: a value outside your key's organisation is rejected.",
     "Body_submit_translation_api_v1_translate_submit_post.credit_source_org_id": "Optional. Charge this translation to a specific organisation's credit pool. The server validates that your key is entitled to that pool.",
@@ -218,9 +281,24 @@
     "getCaseDocuments.format": "The format to return the report in.",
     "listScenarios.category": "Optional. Narrow the list to one scenario category.",
     "listScenarios.state_id": "Optional. Narrow the list to scenarios for one state, plus the ones that apply everywhere.",
-    "listRawSearches.include_extras": "Set true to also get the parameters each search ran with and a summary of its result. Off by default, which keeps the list small.",
-    "listRawSearches.limit": "Page size.",
-    "listRawSearches.offset": "Page offset.",
+    "getSearch.search_id": "The id submitSearch returned for this search.",
+    "cancelSearch.search_id": "The id submitSearch returned for this search.",
+    "submitSearchOtp.search_id": "The id of the search whose status is awaiting_otp.",
+    "recoverSearch.search_id": "The id of a search that has already succeeded or failed.",
+    "listSearches.limit": "Page size.",
+    "listSearches.offset": "Page offset.",
+    "listSearches.status": "Optional. Narrow the list to one status.",
+    "listSearches.batch_id": "Optional. Narrow the list to the searches one submitSearch call started.",
+    "getSearchDocument.search_id": "The id of the search that produced the file.",
+    "getSearchDocument.filename": "The filename exactly as getSearch reports it under documents. Anything else is not found.",
+    "getSearchCredits.limit": "How many ledger movements to return with the balance.",
+    "getSearchCatalog.state": "Optional. Narrow the catalog to one state.",
+    "getSearchLookups.state": "Which state's lookups to read.",
+    "getSearchLookups.dim": "The dimension to resolve, as getSearchCatalog names it on the field: district, mandal, village, sro and the rest.",
+    "getSearchLookups.q": "Optional. Narrow the options by name.",
+    "getSearchLookups.district": "The district already chosen. Required for any dimension nested under one.",
+    "getSearchLookups.mandal": "The mandal already chosen. Required for any dimension nested under one.",
+    "getSearchLookups.limit": "How many options to return.",
     "listTranslations.limit": "Page size.",
     "listTranslations.offset": "Page offset."
   }

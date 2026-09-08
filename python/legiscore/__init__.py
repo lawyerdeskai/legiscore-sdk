@@ -18,6 +18,10 @@ Every call has an asyncio twin on :class:`AsyncLegiScore`, with the same method 
 Endpoints are grouped by module: ``client.core``, ``client.reports``, ``client.search``,
 ``client.translate``, ``client.extraction``, ``client.webhooks``. Those namespaces are generated
 from the OpenAPI spec; the helpers on the client itself collapse the multi-step flows.
+
+``client.search`` is the government-record search product. It runs on its own host and its own
+credit balance, both of which the client handles for you; override the host with
+``search_base_url=`` if you have been told to.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from ._operations import (
 from ._transport import (
     DEFAULT_BASE_URL,
     DEFAULT_MAX_RETRIES,
+    DEFAULT_SEARCH_BASE_URL,
     DEFAULT_TIMEOUT_SECONDS,
     AsyncTransport,
     LegiScoreError,
@@ -59,6 +64,8 @@ from .webhooks import InvalidSignature, WebhookEvent, verify_webhook
 
 __all__ = [
     "CASE_STATES",
+    "DEFAULT_BASE_URL",
+    "DEFAULT_SEARCH_BASE_URL",
     "TERMINAL_CASE_STATES",
     "AsyncLegiScore",
     "InvalidSignature",
@@ -127,8 +134,18 @@ def resolve_upload_content_type(path: Path, content_type: str | None) -> str:
     return content_type or mimetypes.guess_type(path.name)[0] or DEFAULT_UPLOAD_CONTENT_TYPE
 
 
-def describe_key_problem(error: LegiScoreError) -> str:
-    return _KEY_PROBLEMS.get(error.status_code or 0, f"Could not reach the API: {error}")
+def describe_key_problem(error: LegiScoreError, host: str = "the API") -> str:
+    return _KEY_PROBLEMS.get(error.status_code or 0, f"Could not reach {host}: {error}")
+
+
+def failed_host(error: LegiScoreError, host: str) -> dict[str, Any]:
+    """One host's entry in a connection report, when the probe against it failed."""
+    return {
+        "ok": False,
+        "base_url": host,
+        "problem": describe_key_problem(error, host),
+        "status_code": error.status_code,
+    }
 
 
 def is_case_finished(status: Any) -> bool:
@@ -148,12 +165,14 @@ class LegiScore:
         api_key: str | None = None,
         *,
         base_url: str = DEFAULT_BASE_URL,
+        search_base_url: str = DEFAULT_SEARCH_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> None:
         transport = Transport(
             resolve_api_key(api_key),
             base_url=base_url,
+            search_base_url=search_base_url,
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -166,18 +185,32 @@ class LegiScore:
         self.webhooks = WebhooksOperations(transport)
 
     def check_connection(self) -> dict[str, Any]:
-        """Preflight. Prove the key reaches us and report what it can do.
+        """Preflight. Prove the key reaches both hosts and report what it can do on each.
 
-        Returns a plain dict rather than raising, so a setup script can print it:
-        ``{"ok": True, "base_url": ..., "credits": ..., "scenarios": 12}``. When
-        something is wrong, ``ok`` is False and ``problem`` says what to fix.
+        Returns a plain dict rather than raising, so a setup script can print it::
+
+            {"ok": True, "base_url": ..., "credits": ..., "scenarios": 12,
+             "search": {"ok": True, "base_url": ..., "credits": ...}}
+
+        The two products run on two hosts and can fail independently — a network that allows
+        one and not the other is the usual cause. ``ok`` is the reports host; ``search["ok"]``
+        is the search host. Check the one you are about to use; when either is False, its
+        ``problem`` says what to fix.
         """
         report: dict[str, Any] = {"ok": False, "base_url": self._transport.base_url.rstrip("/")}
+        search_host = self._transport.search_base_url.rstrip("/")
+        try:
+            search_credits = self.search.get_search_credits()
+        except LegiScoreError as error:
+            report["search"] = failed_host(error, search_host)
+        else:
+            report["search"] = {"ok": True, "base_url": search_host, "credits": search_credits}
+
         try:
             credits = self.core.get_credits()
         except LegiScoreError as error:
-            report["problem"] = describe_key_problem(error)
-            report["status_code"] = error.status_code
+            # `search` is already in the report and failed_host does not carry that key.
+            report.update(failed_host(error, report["base_url"]))
             return report
 
         report["ok"] = True
@@ -280,12 +313,14 @@ class AsyncLegiScore:
         api_key: str | None = None,
         *,
         base_url: str = DEFAULT_BASE_URL,
+        search_base_url: str = DEFAULT_SEARCH_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> None:
         transport = AsyncTransport(
             resolve_api_key(api_key),
             base_url=base_url,
+            search_base_url=search_base_url,
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -298,13 +333,21 @@ class AsyncLegiScore:
         self.webhooks = AsyncWebhooksOperations(transport)
 
     async def check_connection(self) -> dict[str, Any]:
-        """Preflight. Prove the key reaches us and report what it can do."""
+        """Preflight, both hosts. See :meth:`LegiScore.check_connection`."""
         report: dict[str, Any] = {"ok": False, "base_url": self._transport.base_url.rstrip("/")}
+        search_host = self._transport.search_base_url.rstrip("/")
+        try:
+            search_credits = await self.search.get_search_credits()
+        except LegiScoreError as error:
+            report["search"] = failed_host(error, search_host)
+        else:
+            report["search"] = {"ok": True, "base_url": search_host, "credits": search_credits}
+
         try:
             credits = await self.core.get_credits()
         except LegiScoreError as error:
-            report["problem"] = describe_key_problem(error)
-            report["status_code"] = error.status_code
+            # `search` is already in the report and failed_host does not carry that key.
+            report.update(failed_host(error, report["base_url"]))
             return report
 
         report["ok"] = True

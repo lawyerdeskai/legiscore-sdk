@@ -11,6 +11,11 @@ drops whatever prose the upstream API description carries, applies the curated t
 then runs the shared denylist over the result, so a regeneration cannot quietly publish
 internal notes.
 
+The search module is served from a different host and has no upstream API description, so its
+paths and schemas are hand-authored in spec/search_paths.json and merged into the source before
+the whitelist runs. That fragment is authoritative: a hand-edit to the built spec's search paths
+is reverted by the next build and fails --check.
+
     python3 build_spec.py            # rebuild legiscore-openapi.json
     python3 build_spec.py --check    # exit 1 if the committed spec is not what we'd build
     python3 build_spec.py --scan .   # run the denylist over the whole repo (CI)
@@ -39,6 +44,13 @@ from sanitize_spec import (  # noqa: E402
 SOURCE_SPEC_URL = "https://opinion.legiscore.in/openapi.json"
 OUTPUT_PATH = Path(__file__).with_name("legiscore-openapi.json")
 DESCRIPTIONS_PATH = Path(__file__).with_name("descriptions.json")
+SEARCH_FRAGMENT_PATH = Path(__file__).with_name("search_paths.json")
+
+DEFAULT_SERVER_URL = "https://opinion.legiscore.in"
+# Search is a separate product on a separate host. Naming the host on the path rather than in a
+# comment is what lets the client generator pick the right base URL per operation, instead of a
+# partner discovering the difference from a 404.
+SEARCH_SERVER_URL = "https://legiscore.in"
 
 # The partner surface, grouped into the modules a customer buys.
 # Everything not listed here is not part of the partner surface. Each entry becomes one
@@ -69,14 +81,19 @@ PARTNER_OPERATIONS: dict[tuple[str, str], tuple[str, str]] = {
     ("/api/cases/{case_id}/submit-document-review", "post"): ("reports", "submitDocumentReview"),
     ("/api/cases/{case_id}/acknowledgements", "get"): ("reports", "getAcknowledgements"),
     ("/api/cases/{case_id}/submit-acknowledgements", "post"): ("reports", "submitAcknowledgements"),
-    # --- search: raw search over the state land-record portals ---------------------
-    ("/api/v1/raw-search/submit", "post"): ("search", "submitRawSearch"),
-    ("/api/v1/raw-search/status/{job_id}", "get"): ("search", "getRawSearchStatus"),
-    ("/api/v1/raw-search/history", "get"): ("search", "listRawSearches"),
-    ("/api/v1/raw-search/states", "get"): ("search", "listSearchStates"),
-    ("/api/v1/raw-search/catalog", "get"): ("search", "getSearchCatalog"),
-    ("/api/v1/raw-search/lookups", "get"): ("search", "listLookupDimensions"),
-    ("/api/v1/raw-search/lookups/{state}/{dimension}", "get"): ("search", "getLookupValues"),
+    # --- search: government record searches, on their own host and their own credits ---
+    # Shapes come from spec/search_paths.json, not from the upstream API description.
+    ("/api/v1/search", "post"): ("search", "submitSearch"),
+    ("/api/v1/search", "get"): ("search", "listSearches"),
+    ("/api/v1/search/{search_id}", "get"): ("search", "getSearch"),
+    ("/api/v1/search/{search_id}", "delete"): ("search", "cancelSearch"),
+    ("/api/v1/search/{search_id}/otp", "post"): ("search", "submitSearchOtp"),
+    ("/api/v1/search/{search_id}/recover", "post"): ("search", "recoverSearch"),
+    ("/api/v1/search/{search_id}/documents/{filename}", "get"): ("search", "getSearchDocument"),
+    ("/api/v1/search/assist", "post"): ("search", "assistSearch"),
+    ("/api/v1/search/credits", "get"): ("search", "getSearchCredits"),
+    ("/api/v1/search/catalog", "get"): ("search", "getSearchCatalog"),
+    ("/api/v1/search/lookups", "get"): ("search", "getSearchLookups"),
     # --- translate: document translation -----------------------------------------
     ("/api/v1/translate/submit", "post"): ("translate", "submitTranslation"),
     ("/api/v1/translate/status/{session_id}", "get"): ("translate", "getTranslationStatus"),
@@ -99,7 +116,10 @@ PARTNER_OPERATIONS: dict[tuple[str, str], tuple[str, str]] = {
 MODULE_DESCRIPTIONS = {
     "core": "Uploads, credit balance and scenario reference data. Shared by every module.",
     "reports": "Create a legal opinion case, follow it to completion, answer review pauses, fetch the report.",
-    "search": "Raw search across the state land-record portals.",
+    "search": (
+        "Run a government record search and collect what the portal returns. Its own credit "
+        "balance, and its own host."
+    ),
     "translate": "Translate a document into another Indian language.",
     "extraction": "Pull structured property details out of an uploaded document.",
     "webhooks": "Manage your own delivery endpoints: list, create, update, delete, rotate secret.",
@@ -109,12 +129,15 @@ SPEC_INFO = {
     "title": "LegiScore Partner API",
     "version": "1.0.0",
     "description": (
-        "Programmatic access to LegiScore title search and legal opinion reports.\n\n"
+        "Programmatic access to LegiScore legal opinion reports and government record searches.\n\n"
         "Authentication: send your `lsk_` key as `X-API-Key` (or `Authorization: Bearer lsk_...`).\n"
         "Rate limits are per key. Exceeding one returns 429 with a `Retry-After` header.\n\n"
-        "Typical flow: presign + upload documents, POST /api/requests to create the case, then either "
+        "Reports: presign + upload documents, POST /api/requests to create the case, then either "
         "poll `/api/cases/{case_id}/status` or receive a webhook. A case can pause for missing documents, "
-        "document review, or risk acknowledgements; each pause has a matching resume endpoint."
+        "document review, or risk acknowledgements; each pause has a matching resume endpoint.\n\n"
+        "Search is a separate product: its own credit balance, its own host (named as a `servers` entry "
+        "on each search path), and a flat per-search price that the catalog endpoint states. Submit a "
+        "search, then poll it until its status is `succeeded`, `failed` or `cancelled`."
     ),
 }
 
@@ -151,6 +174,25 @@ def fetch_source_spec(url: str) -> dict:
         raise
 
 
+def load_search_fragment() -> dict:
+    """The hand-authored paths and schemas for the search module."""
+    fragment = json.loads(SEARCH_FRAGMENT_PATH.read_text())
+    return {"paths": fragment["paths"], "schemas": fragment["schemas"]}
+
+
+def merge_fragment(source: dict, fragment: dict) -> dict:
+    """Overlay the fragment on a copy of ``source``. The fragment wins on every key it names.
+
+    Overlaying rather than merging per-operation is deliberate. The committed spec already holds
+    a built copy of these paths, and a build that kept anything from it would let a hand-edit
+    survive one regeneration and then become invisible.
+    """
+    merged = json.loads(json.dumps(source))
+    merged.setdefault("paths", {}).update(fragment["paths"])
+    merged.setdefault("components", {}).setdefault("schemas", {}).update(fragment["schemas"])
+    return merged
+
+
 def collect_schema_refs(node: object, found: set[str]) -> None:
     """Walk a spec fragment and record every #/components/schemas/<name> it references."""
     if isinstance(node, dict):
@@ -181,6 +223,8 @@ def resolve_transitive_schemas(source_schemas: dict, seeds: set[str]) -> dict:
 
 
 def build_partner_spec(source: dict, only_module: str | None = None) -> dict:
+    fragment = load_search_fragment()
+    source = merge_fragment(source, fragment)
     source_paths = source.get("paths", {})
     missing = [
         f"{method.upper()} {path}"
@@ -207,6 +251,12 @@ def build_partner_spec(source: dict, only_module: str | None = None) -> dict:
     if not paths:
         raise SystemExit(f"No operations for module {only_module!r}. Known: {sorted(MODULE_DESCRIPTIONS)}")
 
+    # A path the fragment supplied is served from the search host, not the default one. The
+    # override sits on the path so a generated client resolves the base URL per operation.
+    for path in paths:
+        if path in fragment["paths"]:
+            paths[path]["servers"] = [{"url": SEARCH_SERVER_URL}]
+
     referenced: set[str] = set()
     collect_schema_refs(paths, referenced)
     schemas = resolve_transitive_schemas(source.get("components", {}).get("schemas", {}), referenced)
@@ -228,7 +278,7 @@ def build_partner_spec(source: dict, only_module: str | None = None) -> dict:
     return {
         "openapi": source.get("openapi", "3.1.0"),
         "info": SPEC_INFO,
-        "servers": [{"url": "https://opinion.legiscore.in", "description": "Production"}],
+        "servers": [{"url": DEFAULT_SERVER_URL, "description": "Production"}],
         "security": [{"ApiKeyHeader": []}],
         "tags": [
             {"name": name, "description": description}

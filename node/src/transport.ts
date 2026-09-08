@@ -5,6 +5,11 @@
 // graph stays loadable on Vercel Edge, Cloudflare Workers, Deno, Bun and the browser.
 
 export const DEFAULT_BASE_URL = "https://opinion.legiscore.in";
+/**
+ * Search is a separate product on a separate host. The spec says so per path, so the generated
+ * methods ask for this base by name rather than every caller having to know which is which.
+ */
+export const DEFAULT_SEARCH_BASE_URL = "https://legiscore.in";
 
 /** Methods that change nothing server-side, so replaying one is free. */
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -57,12 +62,18 @@ export type Query = Record<string, string | number | boolean | undefined>;
 export class LegiScoreError extends Error {
   readonly status?: number;
   readonly body?: unknown;
+  /**
+   * The API's own error code when it sent one, e.g. `insufficient_credits`. Stable, and the
+   * thing to branch on: `message` is written for a person and may be reworded.
+   */
+  readonly code?: string;
 
-  constructor(message: string, options: { status?: number; body?: unknown } = {}) {
+  constructor(message: string, options: { status?: number; body?: unknown; code?: string } = {}) {
     super(message);
     this.name = "LegiScoreError";
     this.status = options.status;
     this.body = options.body;
+    this.code = options.code;
   }
 }
 
@@ -72,8 +83,24 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Which host to send to. Generated methods set it from the spec; callers never pass it.
+ * An unknown name falls back to `baseUrl` rather than throwing, so an older client paired
+ * with a newer spec still reaches something.
+ */
+interface BaseSelector {
+  base?: string;
+}
+
+/** Internal. Set only by `requestDownload`, for the one route that answers with a redirect. */
+interface RedirectOption {
+  allowRedirect?: boolean;
+}
+
 export interface TransportOptions {
   baseUrl?: string;
+  /** Override the host the search module talks to. Same https-or-localhost rule as baseUrl. */
+  searchBaseUrl?: string;
   timeoutMs?: number;
   maxRetries?: number;
   /**
@@ -89,6 +116,9 @@ const CONTENT_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
+  // assistSearch accepts webp and rejects application/octet-stream, so guessing wrong here
+  // turns a valid upload into a 400 the caller cannot see the cause of.
+  ".webp": "image/webp",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".doc": "application/msword",
   ".tiff": "image/tiff",
@@ -179,9 +209,13 @@ export async function resolveUploadFile(
 export class Transport {
   private readonly apiKey!: string;
   readonly baseUrl: string;
+  /** Where the search module is sent. Exposed so a caller can print what it is talking to. */
+  readonly searchBaseUrl: string;
   readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** Per-module host overrides, keyed by the name the generated methods ask for. */
+  private readonly moduleBaseUrls: Record<string, string>;
 
   constructor(apiKey: string, options: TransportOptions = {}) {
     if (!apiKey) {
@@ -191,15 +225,25 @@ export class Transport {
     // print the key. Non-enumerable keeps it out of both.
     Object.defineProperty(this, "apiKey", { value: apiKey, enumerable: false, writable: false });
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
+    this.searchBaseUrl = normalizeBaseUrl(options.searchBaseUrl ?? DEFAULT_SEARCH_BASE_URL);
+    this.moduleBaseUrls = { search: this.searchBaseUrl };
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
   }
 
+  private baseFor(base?: string): string {
+    return (base ? this.moduleBaseUrls[base] : undefined) ?? this.baseUrl;
+  }
+
   async request(
     method: string,
     path: string,
-    options: { body?: Record<string, unknown>; query?: Query } & RequestOptions = {},
+    options: {
+      body?: Record<string, unknown>;
+      query?: Query;
+    } & BaseSelector &
+      RequestOptions = {},
   ): Promise<unknown> {
     return this.send(
       method,
@@ -213,13 +257,29 @@ export class Transport {
     );
   }
 
+  /**
+   * Fetch a file the API hands over by redirect, and resolve to its bytes.
+   *
+   * The route answers 302 with a short-lived signed URL. Following that on this request would
+   * put `X-API-Key` on the wire to a storage host — fetch forwards custom headers across a
+   * cross-origin redirect even though it drops `Authorization` — so the redirect is read here
+   * and the signed URL is fetched on a second request that carries no key at all.
+   */
+  async requestDownload(
+    method: string,
+    path: string,
+    options: { query?: Query } & BaseSelector & RequestOptions = {},
+  ): Promise<unknown> {
+    return this.send(method, path, options.query, {}, { ...options, allowRedirect: true });
+  }
+
   /** Send a file upload. `files` maps a field name to one or more documents. */
   async requestMultipart(
     method: string,
     path: string,
     files: Record<string, UploadFile | UploadFile[]> = {},
     form: Record<string, string | number | boolean> = {},
-    options: RequestOptions = {},
+    options: BaseSelector & RequestOptions = {},
   ): Promise<unknown> {
     const payload = new FormData();
 
@@ -241,9 +301,9 @@ export class Transport {
     path: string,
     query: Query | undefined,
     init: { headers?: Record<string, string>; body?: BodyInit },
-    options: RequestOptions,
+    options: BaseSelector & RedirectOption & RequestOptions,
   ): Promise<unknown> {
-    const url = new URL(this.baseUrl + path);
+    const url = new URL(this.baseFor(options.base) + path);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
@@ -289,7 +349,8 @@ export class Transport {
         continue;
       }
 
-      rejectRedirect(response, url.pathname);
+      const location = readRedirect(response, url.pathname, options.allowRedirect === true);
+      if (location !== null) return this.fetchSignedUrl(url, location, options);
       if (retryOn.has(response.status) && attempt < maxRetries) {
         await sleep(backoffMs(attempt, response.headers.get("Retry-After")));
         continue;
@@ -297,6 +358,32 @@ export class Transport {
       return unwrap(response, url.pathname);
     }
     throw new LegiScoreError(`Request to ${url.pathname} failed after retries: ${String(lastError)}`);
+  }
+
+  /**
+   * GET a signed URL the API redirected us to. No API key on this request: the URL carries its
+   * own auth, and the host on the other end is not ours to hand a credential to.
+   */
+  private async fetchSignedUrl(
+    from: URL,
+    location: string,
+    options: RequestOptions,
+  ): Promise<Uint8Array> {
+    const target = resolveSignedUrl(from, location);
+    const response = await this.fetchImpl(target, {
+      method: "GET",
+      redirect: "manual",
+      // A document can be tens of megabytes, so give it the upload budget rather than the
+      // ordinary one, and never less than the client's own timeout.
+      signal: combineSignals(Math.max(this.timeoutMs, UPLOAD_TIMEOUT_MS), options.signal),
+    });
+    rejectRedirect(response, from.pathname);
+    if (!response.ok) {
+      throw new LegiScoreError(`Downloading ${from.pathname} failed: ${response.status}`, {
+        status: response.status,
+      });
+    }
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /** PUT bytes straight to presigned storage. No API key: the URL carries its own auth. */
@@ -343,14 +430,59 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 /**
+ * Where a redirect points, or null when the response is not one.
+ *
+ * Outside the one download route a 3xx is never a legitimate API response, so it throws unless
+ * the caller asked for it. `redirect: "manual"` hands a redirect back as a 3xx on Node, Bun and
+ * Deno and as an opaque status 0 in a browser; the opaque form exposes no headers at all, which
+ * is why a browser cannot complete this download.
+ */
+function readRedirect(response: Response, path: string, allowed: boolean): string | null {
+  if (!isRedirect(response)) return null;
+  if (!allowed) {
+    rejectRedirect(response, path);
+    return null;
+  }
+  const location = response.headers.get("location");
+  if (!location) {
+    throw new LegiScoreError(
+      `${path} redirected to a location this runtime will not expose. Downloads need a runtime ` +
+        "that can read a manual redirect's Location header, which a browser cannot.",
+      { status: response.status },
+    );
+  }
+  return location;
+}
+
+/** The absolute target of a redirect, refused unless it is encrypted. */
+function resolveSignedUrl(from: URL, location: string): string {
+  let target: URL;
+  try {
+    target = new URL(location, from);
+  } catch {
+    throw new LegiScoreError(`${from.pathname} redirected to something that is not a URL.`);
+  }
+  if (target.protocol !== "https:" && !LOCAL_HOSTNAMES.has(target.hostname)) {
+    throw new LegiScoreError(
+      `${from.pathname} redirected to ${target.protocol}//${target.hostname}, which is not https.`,
+    );
+  }
+  return target.toString();
+}
+
+function isRedirect(response: Response): boolean {
+  return (
+    response.type === "opaqueredirect" ||
+    (response.status >= REDIRECT_STATUS_MIN && response.status <= REDIRECT_STATUS_MAX)
+  );
+}
+
+/**
  * A 3xx is never a legitimate API response. `redirect: "manual"` hands it back as a 3xx on
  * Node, Bun and Deno and as an opaque status 0 in a browser; both mean the same thing here.
  */
 function rejectRedirect(response: Response, path: string): void {
-  const redirected =
-    response.type === "opaqueredirect" ||
-    (response.status >= REDIRECT_STATUS_MIN && response.status <= REDIRECT_STATUS_MAX);
-  if (!redirected) return;
+  if (!isRedirect(response)) return;
   throw new LegiScoreError(
     `${path} answered with a redirect (${response.status}); the LegiScore API never redirects. ` +
       "Check baseUrl.",
@@ -393,6 +525,31 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Pull a code and a human message out of a failure body, whichever shape it arrived in.
+ *
+ * Two shapes are in use: `{ detail }` from the report modules, and `{ error: { code, message } }`
+ * from search. A top-level `code` is read as well, so a problem+json body is not lost.
+ */
+function readFailure(payload: unknown): { code?: string; detail?: string } {
+  if (!payload || typeof payload !== "object") return {};
+  const body = payload as { detail?: unknown; code?: unknown; error?: unknown };
+
+  const nested = body.error;
+  if (nested && typeof nested === "object") {
+    const { code, message } = nested as { code?: unknown; message?: unknown };
+    return {
+      code: typeof code === "string" ? code : undefined,
+      detail: typeof message === "string" ? message : undefined,
+    };
+  }
+
+  return {
+    code: typeof body.code === "string" ? body.code : undefined,
+    detail: body.detail === undefined ? undefined : String(body.detail),
+  };
+}
+
 async function unwrap(response: Response, path: string): Promise<unknown> {
   const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   const payload: unknown = contentType.endsWith("json")
@@ -400,13 +557,11 @@ async function unwrap(response: Response, path: string): Promise<unknown> {
     : new Uint8Array(await response.arrayBuffer()); // ZIP downloads and other binaries
 
   if (!response.ok) {
-    const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail: unknown }).detail)
-        : path;
-    throw new LegiScoreError(`${response.status} ${response.statusText}: ${detail}`, {
+    const { code, detail } = readFailure(payload);
+    throw new LegiScoreError(`${response.status} ${response.statusText}: ${detail ?? path}`, {
       status: response.status,
       body: payload,
+      code,
     });
   }
   return payload;

@@ -2,8 +2,8 @@
 
 **For:** your engineering team
 **Prepared by:** LegiScore (a brand of LawyerDesk Advocacy Pvt Ltd)
-**Scope:** the property due-diligence report flow only — start a report, move through the review checkpoints, pull the final report, and receive webhook callbacks. This is a focused subset of the full API.
-**Base URL (production):** `https://opinion.legiscore.in`
+**Scope:** the property due-diligence report flow — start a report, move through the review checkpoints, pull the final report, and receive webhook callbacks — plus the government record search product in section 13, which is a separate product on a separate host. This is a focused subset of the full API.
+**Base URL (production):** `https://opinion.legiscore.in` — except section 13, which is served from `https://legiscore.in`
 **API version:** `2026-04-26` (sent back in every webhook as `api_version`)
 
 > This is the narrative guide. The machine-readable contract is `spec/legiscore-openapi.json`, which the SDKs and the reference Postman collection are generated from. Where this guide and the spec disagree, the spec wins.
@@ -613,6 +613,8 @@ The AI-extracted custom-field values come back inside `data.custom_fields` on th
 
 ## 12. Errors
 
+These are the report host's errors. The search product on `https://legiscore.in` uses a different envelope and its own codes — see 13.7.
+
 Errors return a normalised code:
 
 | Code | HTTP | Meaning |
@@ -629,19 +631,227 @@ Errors return a normalised code:
 
 ---
 
-## 13. Using the Postman collection
+## 13. Government record searches
+
+A **separate product** from the report flow above, on a separate host, with a separate credit
+balance. One `lsk_` key opens both.
+
+| | Reports | Searches |
+|---|---|---|
+| Base URL | `https://opinion.legiscore.in` | `https://legiscore.in` |
+| Auth | `X-API-Key` or `Authorization: Bearer lsk_…` | the same |
+| Credits | `GET /api/v1/credits` | `GET /api/v1/search/credits` |
+| Unit | 1 credit per report | flat per search, price from the catalog |
+| Shape | varies per endpoint | always `{"data": …}` or `{"error": {"code","message"}}` |
+
+A run of searches can never spend the credits bought for reports, and vice versa. A search is
+charged when it is **accepted** and **returned** if the source cannot be reached.
+
+> Every path in this section is on `https://legiscore.in`. Sending them to the reports host is a
+> 404, and it is the single most common mistake here. In the Postman pack these live in folder 9
+> and use `{{search_base_url}}`.
+
+### 13.1 Endpoints
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/api/v1/search/catalog` | What can be searched, what each search needs, what it costs. **No key required.** |
+| `GET` | `/api/v1/search/lookups` | Turn a district/mandal/village/office name into the codes a search needs. |
+| `POST` | `/api/v1/search` | Run one search, or up to 25 in one call. |
+| `GET` | `/api/v1/search/{search_id}` | Poll one search. |
+| `GET` | `/api/v1/search` | List your searches, newest first. |
+| `DELETE` | `/api/v1/search/{search_id}` | Ask a search still in flight to stop. |
+| `GET` | `/api/v1/search/{search_id}/documents/{filename}` | Download a file the search produced. |
+| `GET` | `/api/v1/search/credits` | Balance, what is spendable, recent movements. |
+| `POST` | `/api/v1/search/{search_id}/otp` | Supply a one-time password to a waiting search. |
+| `POST` | `/api/v1/search/{search_id}/recover` | Re-run a finished search against related identifiers. |
+| `POST` | `/api/v1/search/assist` | Read a document and propose parameters. Never submits. |
+
+### 13.2 Discover before you submit — catalog and lookups
+
+`GET /api/v1/search/catalog` is the only unauthenticated call in the API. Build your form or your
+parameter mapping from it rather than hardcoding anything:
+
+```json
+{
+  "data": {
+    "live_states": ["andhra", "telangana", "maharashtra"],
+    "pricing": { "currency": "INR", "credits_per_rupee": 1, "search": 20, "ai_assist": 20, "ai_recovery": 50 },
+    "source": { "status": "operational", "checked_at": "2026-09-08T09:12:00.000Z" },
+    "searches": [
+      {
+        "state": "andhra",
+        "search_type": "ec",
+        "label": "Encumbrance Certificate",
+        "credits": 20,
+        "typical_seconds": 300,
+        "fields": [
+          { "name": "sro", "label": "Sub-Registrar Office", "type": "lookup", "required": true,
+            "lookup": { "dim": "sro" } },
+          { "name": "doc_no", "label": "Document Number", "type": "text", "required": false }
+        ],
+        "one_of": [{ "fields": ["doc_no", "applicant_name"], "message": "Give a document number or an applicant name." }]
+      }
+    ]
+  }
+}
+```
+
+Read `pricing.search` for the price; it is a commercial number and will change.
+`source.status` of `unavailable` means searches will not consume credits, because the charge is
+reversed the moment a job fails to reach the portal.
+
+**A field with a `lookup` is picked, never typed.** Resolve it first:
+
+```http
+GET /api/v1/search/lookups?state=andhra&dim=sro&q=<partial name> HTTP/1.1
+Host: legiscore.in
+X-API-Key: lsk_…
+```
+
+```json
+{ "data": { "options": [ { "value": "1503", "label": "<office name>", "meta": { "sro_code": "1503" } } ] } }
+```
+
+Send the option's `value` **and spread its `meta`** into `params`; those are the codes the source
+keys on. A nested dimension needs its parent first — asking for a village without a district and
+mandal returns `missing_parent`.
+
+### 13.3 Submit — `POST /api/v1/search`
+
+```json
+{ "state": "andhra", "search_type": "ec", "params": { "sro": "1503", "doc_no": "1234", "year": "2018" }, "label": "your own reference" }
+```
+
+For a batch, send `{"searches": [ … ]}` instead, up to **25** per request. `label` is optional and
+echoed back on every read.
+
+**202 Accepted:**
+
+```json
+{
+  "data": {
+    "searches": [ { "id": "SRCH-2026-XXXXXXXX", "status": "queued", "credits_charged": 20, "replayed": false } ],
+    "rejected": [],
+    "replayed": { "free": 0, "billed": 0 },
+    "credits_charged": 20,
+    "batch_id": null
+  }
+}
+```
+
+Three things that catch people out:
+
+- **A batch is not all-or-nothing.** Items that fail validation come back in `rejected`, each with
+  the `index` it had in your request and a reason. The rest still ran. Check it every time.
+- **`replayed`** counts searches answered from an identical run on your account in the last 24
+  hours instead of from the source. Free when you are the one repeating it, and then `id` is your
+  earlier search; charged normally when a colleague asked first. After 24 hours the same request
+  runs fresh.
+- **402** with `code: "insufficient_credits"` refuses the whole batch and charges nothing. A
+  partial batch is far harder to reconcile than a clean rejection.
+
+### 13.4 Poll — `GET /api/v1/search/{search_id}`
+
+Repeat until `status` is `succeeded`, `failed` or `cancelled`. Size the interval against
+`typical_seconds` from the catalog; every few seconds is sensible.
+
+| `status` | Meaning |
+|---|---|
+| `queued`, `running` | in progress, keep polling |
+| `awaiting_otp` | the source asked for a one-time password — see 13.6 |
+| `succeeded` | finished; read `found`, `records`, `documents` |
+| `failed` | read `error`; the charge is returned when the source could not be reached |
+| `cancelled` | you stopped it |
+
+```json
+{
+  "data": {
+    "search": {
+      "id": "SRCH-2026-XXXXXXXX",
+      "status": "succeeded",
+      "found": true,
+      "record_count": 3,
+      "records": [ … ],
+      "documents": [ { "filename": "ec.pdf", "content_type": "application/pdf", "bytes": 184320 } ],
+      "credits_charged": 20,
+      "refunded": false,
+      "completed_at": "2026-09-08T09:17:11.000Z"
+    }
+  }
+}
+```
+
+> **`found: false` on a `succeeded` search is an answer, not a failure.** The source was reached
+> and holds nothing on record against that property — for an encumbrance search that is the good
+> outcome. Do not retry it and do not surface it as an error. `found` is `null` until the search
+> settles.
+
+`GET /api/v1/search` lists your searches newest first, with `limit`, `offset`, `status` and
+`batch_id`. Anything still in flight is refreshed on the way past, so listing doubles as polling a
+whole batch in one call.
+
+### 13.5 Documents — `GET /api/v1/search/{search_id}/documents/{filename}`
+
+`filename` is exactly as `documents[]` reports it. The response is **`302` to a signed URL that
+expires in an hour**, not the bytes.
+
+> **Do not follow that redirect on the same connection.** Your API key travels in a custom header,
+> and a custom header **is** forwarded across a cross-origin redirect (unlike `Authorization`,
+> which browsers and `fetch` drop). Following it hands your key to a storage host. Read the
+> `Location` header and issue a second request with **no key attached**. Both SDKs do this for you;
+> Postman follows redirects itself, so the request in folder 9 just works.
+
+The file is resolved from the search's own document list rather than from the path, so a filename
+that is not on that search is `404` — as is one belonging to another account, deliberately
+indistinguishable.
+
+### 13.6 Optional endpoints
+
+| Endpoint | What it is |
+|---|---|
+| `DELETE /api/v1/search/{search_id}` | Stops a search still in flight. Returns the search with `cancelling: true`; the settled status arrives on a later poll and the credits come back if it never completed. A search already settled returns `409 already_finished`. |
+| `POST /api/v1/search/{search_id}/otp` | Body `{"otp": "1234"}`, 4–8 digits, only while `status` is `awaiting_otp`. Most searches never reach that state. Any other status returns `409 not_waiting`. |
+| `POST /api/v1/search/{search_id}/recover` | Re-runs a finished search against related identifiers when the first attempt came back thin. No request body. Priced separately from a plain search; nothing is charged when the source is unreachable or when there is nothing defensible to try. |
+| `POST /api/v1/search/assist` | `multipart/form-data` with a `file` (PDF/PNG/JPEG/WebP, under 20 MB) or `text`, plus `state`. Proposes parameters with a confidence per field and **never submits them** — a wrong survey number does not fail loudly, it searches a different property and returns a confident, wrong clean result. A person confirms. A document nothing could be read from costs nothing. |
+
+### 13.7 Errors
+
+Every failure on this host has the same shape. Branch on `code`, never on `message`:
+
+```json
+{ "error": { "code": "insufficient_credits", "message": "This run needs 20 search credits; 0 available." } }
+```
+
+| `code` | HTTP | Meaning |
+|---|---|---|
+| `unauthorized` | 401 | Key missing, malformed or revoked. |
+| `invalid_body` | 400 | Neither `searches` nor `state` + `search_type` + `params`. |
+| `too_many` | 400 | More than 25 searches in one request. |
+| `insufficient_credits` | 402 | Not enough search credits. Nothing was charged. |
+| `not_found` | 404 | No such search or document — also returned for one that is not yours. |
+| `unsupported_state`, `unknown_dim`, `missing_parent` | 404 / 400 | Lookup asked for something that does not exist, or without its parent. |
+| `already_finished` | 409 | Cancel called on a search that already settled. |
+| `not_waiting` | 409 | OTP sent to a search that is not waiting for one. |
+| `not_finished`, `already_recovery`, `unknown_search` | 409 | Recovery called on a search that cannot be recovered. |
+| `recovery_unavailable` | 503 | The source is down, so recovery cannot proceed. Nothing was charged. |
+| `internal` | 500 | Unexpected server error. |
+
+---
+
+## 14. Using the Postman collection
 
 Three files accompany this document:
 
-- `legiscore.postman_collection.json` — every request in this flow, in order, with collection-level `X-API-Key` auth.
-- `legiscore.postman_environment.json` — the shared environment. Every value ships **empty** except `base_url`; nothing in it is a live key or a real id.
+- `legiscore.postman_collection.json` — every request in this flow, in order, with collection-level `X-API-Key` auth. Folders 0 to 8 are the report flow; folder 9 is the search product.
+- `legiscore.postman_environment.json` — the shared environment. Every value ships **empty** except `base_url` and `search_base_url`; nothing in it is a live key or a real id.
 - `legiscore-reference.postman_collection.json` — every operation the API exposes, generated from the spec, for looking things up.
 
 To run:
 
 1. Import all three files into Postman.
 2. Select the **LegiScore (production)** environment.
-3. Set `api_key` to the `lsk_` key we issue you. (`base_url` is preset to `https://opinion.legiscore.in`.)
+3. Set `api_key` to the `lsk_` key we issue you. (`base_url` is preset to `https://opinion.legiscore.in`, and `search_base_url` to `https://legiscore.in` for folder 9.)
 4. Run the requests top to bottom. The upload and create requests have test scripts that auto-capture `document_id` and `case_id` into the environment, so later requests resolve automatically.
 
 A built-in **"Webhook envelope (reference)"** request documents the inbound callback shape; it is illustrative, not a call you make.

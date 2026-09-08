@@ -228,70 +228,120 @@ export class SearchOperations {
   constructor(private readonly transport: Transport) {}
 
   /**
+   * Submit a search
+   *
+   * POST /api/v1/search
+   *
+   * Body (SubmitSearchRequest): label, params, search_type, searches, state
+   */
+  async submitSearch(body?: Record<string, unknown>, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("POST", `/api/v1/search`, { body, query, ...options, base: "search" });
+  }
+
+  /**
+   * List your searches
+   *
+   * GET /api/v1/search
+   *
+   * Query: limit, offset, status, batch_id
+   */
+  async listSearches(query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("GET", `/api/v1/search`, { query, ...options, base: "search" });
+  }
+
+  /**
+   * Propose search parameters from a document
+   *
+   * POST /api/v1/search/assist
+   *
+   * Files: file
+   * Form: state, text
+   */
+  async assistSearch(files?: Record<string, UploadFile | UploadFile[]>, form?: Record<string, string | number | boolean>, options?: RequestOptions): Promise<unknown> {
+    return this.transport.requestMultipart("POST", `/api/v1/search/assist`, files, form, { ...options, base: "search" });
+  }
+
+  /**
    * Get the search catalog
    *
-   * GET /api/v1/raw-search/catalog
+   * GET /api/v1/search/catalog
+   *
+   * Query: state
    */
   async getSearchCatalog(query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/catalog`, { query, ...options });
+    return this.transport.request("GET", `/api/v1/search/catalog`, { query, ...options, base: "search" });
   }
 
   /**
-   * List raw searches
+   * Get your search credit balance
    *
-   * GET /api/v1/raw-search/history
+   * GET /api/v1/search/credits
    *
-   * Query: limit, offset, state, search_type, status, include_extras
+   * Query: limit
    */
-  async listRawSearches(query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/history`, { query, ...options });
+  async getSearchCredits(query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("GET", `/api/v1/search/credits`, { query, ...options, base: "search" });
   }
 
   /**
-   * List lookup dimensions
+   * Resolve a lookup to its codes
    *
-   * GET /api/v1/raw-search/lookups
+   * GET /api/v1/search/lookups
+   *
+   * Query: state, dim, q, district, mandal, limit
    */
-  async listLookupDimensions(query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/lookups`, { query, ...options });
+  async getSearchLookups(query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("GET", `/api/v1/search/lookups`, { query, ...options, base: "search" });
   }
 
   /**
-   * Get lookup values
+   * Get one search
    *
-   * GET /api/v1/raw-search/lookups/{state}/{dimension}
+   * GET /api/v1/search/{search_id}
    */
-  async getLookupValues(state: string, dimension: string, query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/lookups/${encodeURIComponent(state)}/${encodeURIComponent(dimension)}`, { query, ...options });
+  async getSearch(search_id: string, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("GET", `/api/v1/search/${encodeURIComponent(search_id)}`, { query, ...options, base: "search" });
   }
 
   /**
-   * List searchable states
+   * Cancel a search
    *
-   * GET /api/v1/raw-search/states
+   * DELETE /api/v1/search/{search_id}
    */
-  async listSearchStates(query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/states`, { query, ...options });
+  async cancelSearch(search_id: string, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("DELETE", `/api/v1/search/${encodeURIComponent(search_id)}`, { query, ...options, base: "search" });
   }
 
   /**
-   * Get raw search status
+   * Download a document from a search
    *
-   * GET /api/v1/raw-search/status/{job_id}
+   * GET /api/v1/search/{search_id}/documents/{filename}
+   *
+   * Returns bytes, not JSON. The API answers with a redirect to a short-lived
+   * signed URL, which the SDK follows for you without sending your API key.
    */
-  async getRawSearchStatus(job_id: string, query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("GET", `/api/v1/raw-search/status/${encodeURIComponent(job_id)}`, { query, ...options });
+  async getSearchDocument(search_id: string, filename: string, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.requestDownload("GET", `/api/v1/search/${encodeURIComponent(search_id)}/documents/${encodeURIComponent(filename)}`, { query, ...options, base: "search" });
   }
 
   /**
-   * Submit a raw search
+   * Supply a one-time password
    *
-   * POST /api/v1/raw-search/submit
+   * POST /api/v1/search/{search_id}/otp
    *
-   * Body (UnifiedRawSearchRequest): credit_source, credit_source_branch_id, credit_source_org_id, force, param_labels, params, payment_order_id, search_type, state
+   * Body (SubmitSearchOtpRequest): otp
    */
-  async submitRawSearch(body?: Record<string, unknown>, query?: Query, options?: RequestOptions): Promise<unknown> {
-    return this.transport.request("POST", `/api/v1/raw-search/submit`, { body, query, ...options });
+  async submitSearchOtp(search_id: string, body?: Record<string, unknown>, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("POST", `/api/v1/search/${encodeURIComponent(search_id)}/otp`, { body, query, ...options, base: "search" });
+  }
+
+  /**
+   * Recover an incomplete search
+   *
+   * POST /api/v1/search/{search_id}/recover
+   */
+  async recoverSearch(search_id: string, query?: Query, options?: RequestOptions): Promise<unknown> {
+    return this.transport.request("POST", `/api/v1/search/${encodeURIComponent(search_id)}/recover`, { query, ...options, base: "search" });
   }
 
 }
