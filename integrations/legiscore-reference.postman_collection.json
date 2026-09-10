@@ -270,7 +270,7 @@
                 "continue"
               ]
             },
-            "description": "Resume a case paused for missing documents, either by supplying new document ids or by setting proceed_anyway so the report is produced and records the gap. Answering one pause can surface the next, so poll the status again afterwards rather than assuming the case is finished.",
+            "description": "Resume a case paused for missing documents, either by supplying new document ids or by setting proceed_anyway so the report is produced and records the gap. Answering one pause can surface the next, so poll the status again afterwards rather than assuming the case is finished. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists what your organisation still needs actioned and is refused again on a retry of the same body, and a 200 carrying pending_checker, which records your answer and holds the case at this pause until a second person approves it.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"new_document_ids\": [],\n  \"proceed_anyway\": false,\n  \"document_annotations\": [],\n  \"split_document_ids\": []\n}",
@@ -477,7 +477,7 @@
                 "submit-acknowledgements"
               ]
             },
-            "description": "Record a decision against each risk and release the case for final report generation. This writes a legal acceptance record attributed to whoever's key made the call, so it should carry a person's decision rather than a default set in code. Send each item back whole with a decision added; dropping fields off the generated item loses information the report needs.",
+            "description": "Record a decision against each risk and release the case for final report generation. This writes a legal acceptance record attributed to whoever's key made the call, so it should carry a person's decision rather than a default set in code. Send each item back whole with a decision added; dropping fields off the generated item loses information the report needs. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the risks still undecided or still missing the comment your organisation requires, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"acknowledgements\": [\n    {}\n  ]\n}",
@@ -511,7 +511,7 @@
                 "submit-document-review"
               ]
             },
-            "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one.",
+            "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. Findings are marked as seen in the web application; a case whose organisation requires that is refused until someone does.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"updates\": [],\n  \"proceed_to_searches\": true\n}",

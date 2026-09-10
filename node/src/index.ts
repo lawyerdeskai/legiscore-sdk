@@ -53,6 +53,14 @@ export {
   DEFAULT_TOLERANCE_SECONDS,
   type WebhookEvent,
 } from "./webhooks.js";
+export {
+  PAUSE_GATE_UNMET,
+  PAUSE_STAGES,
+  isPendingSecondApproval,
+  readPauseGateRefusal,
+  type PauseGateRefusal,
+  type PauseStage,
+} from "./pauses.js";
 
 /** The public lifecycle vocabulary (PublicCaseState in the spec). */
 export const CASE_STATES = ["queued", "running", "awaiting_review", "completed", "failed"] as const;
@@ -260,6 +268,12 @@ export class LegiScore {
   /**
    * Poll until the case finishes, fails, or pauses for review.
    * Polling is the fallback — configure a webhook and the transition is pushed to you.
+   *
+   * `awaiting_review` is returned once per pause, and answering a pause is what clears it. If
+   * your answer was parked for a second approver, which `isPendingSecondApproval` reports off
+   * the reply, the case stays at the same pause and this returns `awaiting_review` again.
+   * Waiting on it a second time without checking that flag waits for a person, not for the
+   * platform.
    */
   async waitForCase(
     caseId: string,

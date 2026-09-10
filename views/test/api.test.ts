@@ -2,7 +2,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ackItems, buildAckSubmission, createProxyReports, pauseOf, ViewsError } from "../src/api.js";
+import {
+  ackItems,
+  buildAckSubmission,
+  createProxyReports,
+  isPendingSecondApproval,
+  pauseOf,
+  PAUSE_GATE_UNMET,
+  readPauseGateRefusal,
+  ViewsError,
+} from "../src/api.js";
 
 test("pauseOf dispatches on internal_status, never on state alone", () => {
   assert.equal(pauseOf({ state: "awaiting_review", internal_status: "awaiting_documents" }), "missing_documents");
@@ -76,4 +85,48 @@ test("the proxy client hits the API's own paths and raises the server's detail",
     return true;
   });
   assert.deepEqual(calls, ["GET /legiscore/api/cases/c%201/status", "GET /legiscore/api/cases/c%201/missing-documents"]);
+});
+
+test("a refused submit surfaces the server's reasons, not a bare status line", async () => {
+  const refusal = {
+    detail: {
+      code: PAUSE_GATE_UNMET,
+      stage: "upload_docs",
+      errors: ["2 missing documents are not yet actioned: Sale Deed, Encumbrance Certificate"],
+    },
+  };
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify(refusal), {
+      status: 422,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+  const api = createProxyReports("/legiscore", fetchImpl);
+  const failed = await api
+    .continueCase("c1", { proceed_anyway: true })
+    .then(() => null)
+    .catch((error: unknown) => error);
+
+  assert.ok(failed instanceof ViewsError);
+  assert.equal(failed.status, 422);
+  // Without the structured read this said "POST /api/cases/c1/continue failed with 422".
+  assert.match(failed.message, /Sale Deed/);
+
+  const refused = readPauseGateRefusal(failed);
+  assert.ok(refused);
+  assert.equal(refused.stage, "upload_docs");
+  assert.equal(refused.reasons.length, 1);
+});
+
+test("readPauseGateRefusal ignores everything that is not a refusal", () => {
+  assert.equal(readPauseGateRefusal(null), null);
+  assert.equal(readPauseGateRefusal({ detail: "Case is not awaiting documents" }), null);
+  assert.equal(readPauseGateRefusal({ detail: [{ msg: "field required" }] }), null);
+  assert.equal(readPauseGateRefusal({ detail: { code: "something_else" } }), null);
+});
+
+test("isPendingSecondApproval tells a parked answer from an advanced one", () => {
+  assert.equal(isPendingSecondApproval({ success: true, pending_checker: true }), true);
+  assert.equal(isPendingSecondApproval({ success: true, task_id: "t" }), false);
+  assert.equal(isPendingSecondApproval(null), false);
 });

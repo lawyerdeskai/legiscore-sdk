@@ -92,6 +92,34 @@ in a loop turns a legal opinion into a rubber stamp, and it will be your integra
 and then reads the result will read nothing. Bound the loop (5 rounds is plenty) so a stuck case
 cannot spin forever.
 
+**Two replies mean the case did not move.** Handle both or your loop will spin.
+
+- **422 with `.code == PAUSE_GATE_UNMET`.** The organisation requires every item at the pause to
+  be actioned before the case may advance, and something is outstanding.
+  `read_pause_gate_refusal(error)` returns the stage and a list of plain sentences saying what.
+  **Do not retry**: the same body is refused again. Action what the reasons name, then call again.
+  On the document-analysis pause the findings are marked as seen in the web application, so a
+  refusal there is answered by a person, not by your code.
+- **200 carrying `pending_checker: true`.** Your answer was recorded and the case is held at the
+  same pause until a second person approves it. `is_pending_second_approval(reply)` reports it.
+  The case stays `awaiting_review`, so a loop that waits again without checking waits for a
+  colleague rather than for the platform. Stop and tell the caller.
+
+```python
+from legiscore import LegiScoreError, is_pending_second_approval, read_pause_gate_refusal
+
+try:
+    reply = client.reports.continue_case(case_id, body={"new_document_ids": ids})
+except LegiScoreError as error:
+    refused = read_pause_gate_refusal(error)
+    if refused is None:
+        raise
+    return show_to_a_person(refused.reasons)      # not retryable by code
+
+if is_pending_second_approval(reply):
+    return waiting_on_an_approver()               # the case has not advanced
+```
+
 ## 5. Rules that are not guessable
 
 - **`propertyFocus` is an object, not a string.** Use `{"address": "Sy. No. 123, Example Village, Telangana"}`.
@@ -161,7 +189,9 @@ identifiers and is priced separately. Both are optional; ignore them unless aske
 ## 7. Errors
 
 Every failure raises `LegiScoreError` with `.status_code`, `.body` and, when the API sent one,
-`.code` — a stable string such as `insufficient_credits`. Branch on `.code`, never on the message. Rate limits (429) and
+`.code`, a stable string such as `insufficient_credits` or `PAUSE_GATE_UNMET`. Branch on `.code`,
+never on the message; where the reason is a list rather than a sentence the message names the code
+and leaves the detail on `.body`. Rate limits (429) and
 transient 5xx are retried inside the SDK, honouring `Retry-After`, so an error that reaches your
 code has already been retried and failed.
 
@@ -180,7 +210,7 @@ Handle these explicitly and let everything else raise:
 | 401 | key rejected | fail loudly at startup, not per request |
 | 402 | out of credits | alert a human; nothing was charged. On a search, `.code` is `insufficient_credits` |
 | 403 | missing permission | alert a human; not retryable |
-| 422 | bad payload | log `error.body`, it names the field |
+| 422 | bad payload, **or** a pause the organisation refused to advance | if `.code` is `PAUSE_GATE_UNMET` read the reasons and stop, per section 4; otherwise log `error.body`, it names the field |
 | 429 | sustained overrun | slow the caller down |
 
 ## 8. Webhooks instead of polling, when you can

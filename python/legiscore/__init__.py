@@ -60,19 +60,31 @@ from ._transport import (
     MissingAPIKeyError,
     Transport,
 )
+from .pauses import (
+    PAUSE_GATE_UNMET,
+    PAUSE_STAGES,
+    PauseGateRefusal,
+    is_pending_second_approval,
+    read_pause_gate_refusal,
+)
 from .webhooks import InvalidSignature, WebhookEvent, verify_webhook
 
 __all__ = [
     "CASE_STATES",
     "DEFAULT_BASE_URL",
     "DEFAULT_SEARCH_BASE_URL",
+    "PAUSE_GATE_UNMET",
+    "PAUSE_STAGES",
     "TERMINAL_CASE_STATES",
     "AsyncLegiScore",
     "InvalidSignature",
     "LegiScore",
     "LegiScoreError",
     "MissingAPIKeyError",
+    "PauseGateRefusal",
     "WebhookEvent",
+    "is_pending_second_approval",
+    "read_pause_gate_refusal",
     "verify_webhook",
 ]
 
@@ -276,6 +288,12 @@ class LegiScore:
 
         Polling is the fallback. Configure a webhook and you get the same transition
         pushed to you instead.
+
+        ``awaiting_review`` is returned once per pause, and answering a pause is what clears
+        it. If your answer was parked for a second approver, which
+        :func:`~legiscore.is_pending_second_approval` reports off the reply, the case stays at
+        the same pause and this returns ``awaiting_review`` again. Waiting on it a second time
+        without checking that flag waits for a person, not for the platform.
         """
         deadline = time.monotonic() + timeout
         while True:
@@ -402,7 +420,12 @@ class AsyncLegiScore:
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
         timeout: float = DEFAULT_CASE_TIMEOUT_SECONDS,
     ) -> Any:
-        """Poll until the case finishes, fails, or pauses for review."""
+        """Poll until the case finishes, fails, or pauses for review.
+
+        Same rule as the synchronous twin: an answer parked for a second approver leaves
+        the case at the pause it was already at, so check
+        :func:`~legiscore.is_pending_second_approval` on the reply before waiting again.
+        """
         deadline = time.monotonic() + timeout
         while True:
             status = await self.reports.get_case_status(case_id)

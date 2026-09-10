@@ -194,10 +194,59 @@ export function createProxyReports(basePath = "", fetchImpl: typeof fetch = fetc
 
 /** A proxy error body is whatever the partner's backend forwarded, so narrow before reading it. */
 function errorDetail(parsed: unknown): string | undefined {
+  const refused = readPauseGateRefusal(parsed);
+  if (refused && refused.reasons.length > 0) return refused.reasons.join(" ");
   if (parsed === null || typeof parsed !== "object") return undefined;
   const record = parsed as Record<string, unknown>;
   const detail = record.detail ?? record.message;
   return typeof detail === "string" && detail ? detail : undefined;
+}
+
+/** The error code the three submit calls answer with when a pause is not fully actioned. */
+export const PAUSE_GATE_UNMET = "PAUSE_GATE_UNMET";
+
+/** A refused submit: which pause, and the reasons to put in front of the person answering it. */
+export interface PauseGateRefusal {
+  stage: string;
+  reasons: string[];
+}
+
+/**
+ * Read a pause refusal out of a failed submit, or `null` if that is not what happened.
+ *
+ * An organisation can require every item at a pause to be actioned before the case may
+ * advance. When something is outstanding the API answers 422 with these reasons rather than
+ * advancing. Retrying the same body is refused again: action what the reasons name first.
+ *
+ * Pass the `ViewsError` from a submit, or a parsed body if you proxy the call yourself.
+ */
+export function readPauseGateRefusal(error: unknown): PauseGateRefusal | null {
+  const body = error instanceof ViewsError ? error.body : error;
+  if (!body || typeof body !== "object") return null;
+
+  const detail = (body as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+
+  const { code, stage, errors } = detail as { code?: unknown; stage?: unknown; errors?: unknown };
+  if (code !== PAUSE_GATE_UNMET) return null;
+
+  const reasons = Array.isArray(errors)
+    ? errors
+        .filter((reason): reason is string => typeof reason === "string")
+        .map((reason) => reason.trim())
+        .filter((reason) => reason !== "")
+    : [];
+  return { stage: typeof stage === "string" ? stage : "", reasons };
+}
+
+/**
+ * True when a submit was recorded but left the case where it was, waiting for a second person
+ * to approve it. The case stays at the same pause until they do, so this is not a failure and
+ * not an advance.
+ */
+export function isPendingSecondApproval(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  return (response as { pending_checker?: unknown }).pending_checker === true;
 }
 
 function safeJson(text: string): unknown {

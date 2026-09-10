@@ -1,6 +1,6 @@
 {
   "name": "@legiscore/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Node SDK for the LegiScore partner API — legal opinion reports and government record searches.",
   "license": "Apache-2.0",
   "author": "LawyerDesk Advocacy Pvt Ltd <info@legiscore.in>",

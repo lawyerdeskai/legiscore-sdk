@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ackItems,
   buildAckSubmission,
+  isPendingSecondApproval,
   pauseOf,
   type AckDecision,
   type AcknowledgementItem,
@@ -35,6 +36,12 @@ export interface UseCaseResult {
   loading: boolean;
   busy: boolean;
   error: Error | null;
+  /**
+   * The last answer was recorded and is waiting for a second person to approve it. The case
+   * stays at the same pause meanwhile, so the screen re-renders unchanged: say so rather than
+   * letting it look as though nothing happened.
+   */
+  pendingApproval: boolean;
   reload(): Promise<void>;
   continueCase(body: { new_document_ids?: string[]; proceed_anyway?: boolean; document_annotations?: DocumentAnnotation[] }): Promise<void>;
   submitDocumentReview(updates: FieldUpdate[], proceedToSearches?: boolean): Promise<void>;
@@ -55,6 +62,7 @@ export function useCase(api: ReportsApi, caseId: string, options: UseCaseOptions
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [pendingApproval, setPendingApproval] = useState(false);
   // A reload that resolves after the component unmounts must not setState; and a slow
   // response overtaken by a newer one must not overwrite it.
   const live = useRef(0);
@@ -94,7 +102,9 @@ export function useCase(api: ReportsApi, caseId: string, options: UseCaseOptions
     async (action: () => Promise<unknown>) => {
       setBusy(true);
       try {
-        await action();
+        // A 200 does not always mean the case moved: where a second person has to approve the
+        // answer, the API records it and leaves the case at the same pause.
+        setPendingApproval(isPendingSecondApproval(await action()));
         setError(null);
         await reload();
       } catch (caught) {
@@ -114,6 +124,7 @@ export function useCase(api: ReportsApi, caseId: string, options: UseCaseOptions
     loading,
     busy,
     error,
+    pendingApproval,
     reload,
     continueCase: (body) => submit(() => api.continueCase(caseId, body)),
     submitDocumentReview: (updates, proceedToSearches = true) =>

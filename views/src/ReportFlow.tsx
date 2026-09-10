@@ -32,6 +32,9 @@ export function ReportFlow({ api, caseId, onUpload, children, className, ...opti
     <div className={["lsc-flow", className].filter(Boolean).join(" ")}>
       <CaseStatusBar status={state.status} />
       {state.error ? <p className="lsc-note lsc-note-error">{state.error.message}</p> : null}
+      {state.pendingApproval ? (
+        <p className="lsc-note">Sent for approval. The case moves on once a colleague approves it.</p>
+      ) : null}
       {state.loading ? <p className="lsc-note">Loading the case.</p> : null}
 
       {state.pause === "missing_documents" && state.payload ? (

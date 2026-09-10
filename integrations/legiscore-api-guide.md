@@ -333,7 +333,7 @@ Response: `{ "success": true, "case_id": "...", "task_id": "...", "message": "..
 { "new_document_ids": [], "proceed_anyway": true }
 ```
 
-Response: `{ "success": true, "case_id": "...", "task_id": "...", "message": "...", "new_documents_count": 0, "proceed_anyway": true }`. Returns `400` if the case is not actually awaiting documents.
+Response: `{ "success": true, "case_id": "...", "task_id": "...", "message": "...", "new_documents_count": 0, "proceed_anyway": true }`. Returns `400` if the case is not actually awaiting documents, `422` with `PAUSE_GATE_UNMET` if your organisation still needs items actioned, and a `200` carrying `pending_checker` if the answer is waiting on a second approver. See 12.0.
 
 ### Checkpoint 3 — Risk acknowledgement (`internal_status = awaiting_acknowledgements`)
 
@@ -613,6 +613,40 @@ The AI-extracted custom-field values come back inside `data.custom_fields` on th
 
 ## 12. Errors
 
+### 12.0 Two replies that mean the case did not move
+
+Every checkpoint in Section 6 is resumed by a `POST`, and two of its replies are not what a
+caller reading only the status line will assume.
+
+**422 `PAUSE_GATE_UNMET`.** Your organisation can require every item at a checkpoint to be
+actioned before the case may advance. When something is outstanding, `POST .../continue`,
+`POST .../submit-document-review` and `POST .../submit-acknowledgements` refuse with 422 and a
+structured body rather than advancing:
+
+```json
+{
+  "detail": {
+    "code": "PAUSE_GATE_UNMET",
+    "stage": "upload_docs",
+    "errors": ["2 missing documents are not yet actioned: Sale Deed, Encumbrance Certificate"]
+  }
+}
+```
+
+`stage` is `upload_docs`, `review_analysis` or `submit_acks`. `errors` are plain sentences meant
+to be shown to whoever is answering the checkpoint. **Retrying the same body is refused again.**
+Action what the reasons name and call again. Test for this before any other non-2xx branch: a
+`400` from these endpoints means the case already advanced, which is the opposite conclusion.
+
+**200 with `pending_checker: true`.** Where a second person has to approve the answer, the reply
+is `{"success": true, "advanced": false, "pending_checker": true, "stage": "...", ...}`. The answer
+is recorded and the case is held at the same checkpoint until the approver acts, so the status
+stays `awaiting_review`. Treating it as an advance leaves you polling a case that is not moving.
+
+### 12.1 Codes
+
+
+
 These are the report host's errors. The search product on `https://legiscore.in` uses a different envelope and its own codes — see 13.7.
 
 Errors return a normalised code:
@@ -624,6 +658,7 @@ Errors return a normalised code:
 | `case_not_found` | 404 | Unknown case (also returned for a case that is not yours — ids are not enumerable). |
 | `case_not_ready` | 409 | `/result` called before the report is `completed`; body carries the current `state`. |
 | `validation_failed` | 422 | Request body failed validation. |
+| `PAUSE_GATE_UNMET` | 422 | A checkpoint was refused because items are still outstanding. Body carries `stage` and `errors`; see 12.0. Not retryable. |
 | `INVALID_PARTNER_METADATA` | 422 | `metadata` blob malformed. |
 | `unsupported_content_type` | 415 | Upload content type not in the allowlist. |
 | `idempotency_conflict` | 409 | Same `Idempotency-Key` reused with a different body. |

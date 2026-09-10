@@ -528,8 +528,16 @@ function sleep(ms: number): Promise<void> {
 /**
  * Pull a code and a human message out of a failure body, whichever shape it arrived in.
  *
- * Two shapes are in use: `{ detail }` from the report modules, and `{ error: { code, message } }`
- * from search. A top-level `code` is read as well, so a problem+json body is not lost.
+ * Four shapes are in use: `{ detail: "<sentence>" }` and `{ detail: { code, ... } }` from the
+ * report modules, `{ detail: [ ... ] }` when a field fails validation, and
+ * `{ error: { code, message } }` from search. A top-level `code` is read as well, so a
+ * problem+json body is not lost.
+ *
+ * The object form is why this is not a one-liner. Stringifying it yields `"[object Object]"`,
+ * which drops the code callers are told to branch on and leaves nothing readable behind. The
+ * code is lifted into `LegiScoreError.code`; the reasons stay on `.body` rather than going into
+ * the message, because the message is the part that gets logged and the reasons name documents
+ * and risks on the case.
  */
 function readFailure(payload: unknown): { code?: string; detail?: string } {
   if (!payload || typeof payload !== "object") return {};
@@ -544,9 +552,27 @@ function readFailure(payload: unknown): { code?: string; detail?: string } {
     };
   }
 
+  const detail = body.detail;
+  if (Array.isArray(detail)) {
+    const count = detail.length;
+    return {
+      code: typeof body.code === "string" ? body.code : undefined,
+      detail: `${count} field${count === 1 ? "" : "s"} were rejected; the list is on error.body`,
+    };
+  }
+
+  if (detail && typeof detail === "object") {
+    const { code, stage } = detail as { code?: unknown; stage?: unknown };
+    if (typeof code === "string") {
+      const where = typeof stage === "string" && stage ? ` at the ${stage} checkpoint` : "";
+      return { code, detail: `${code}${where}; the reasons are on error.body` };
+    }
+    return { code: typeof body.code === "string" ? body.code : undefined };
+  }
+
   return {
     code: typeof body.code === "string" ? body.code : undefined,
-    detail: body.detail === undefined ? undefined : String(body.detail),
+    detail: detail === undefined ? undefined : String(detail),
   };
 }
 

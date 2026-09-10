@@ -199,9 +199,16 @@ def build_multipart_parts(files: dict[str, Any] | None) -> list[tuple[str, tuple
 def read_failure(payload: Any) -> tuple[str | None, str | None]:
     """Pull ``(code, detail)`` out of a failure body, whichever shape it arrived in.
 
-    Two shapes are in use: ``{"detail": ...}`` from the report modules and
+    Four shapes are in use: ``{"detail": "<sentence>"}`` and ``{"detail": {"code", ...}}`` from
+    the report modules, ``{"detail": [...]}`` when a field fails validation, and
     ``{"error": {"code", "message"}}`` from search. A top-level ``code`` is read as well, so a
     problem+json body is not lost.
+
+    The dict form is why this is not a one-liner. ``str()`` of it prints the whole mapping into
+    the message and still leaves the code callers are told to branch on buried inside a string.
+    The code is lifted onto :attr:`LegiScoreError.code`; the reasons stay on ``.body`` rather
+    than going into the message, because the message is the part that gets logged and the
+    reasons name documents and risks on the case.
     """
     if not isinstance(payload, dict):
         return None, None
@@ -215,12 +222,24 @@ def read_failure(payload: Any) -> tuple[str | None, str | None]:
             message if isinstance(message, str) else None,
         )
 
-    code = payload.get("code")
+    top_level_code = payload.get("code")
+    top_level_code = top_level_code if isinstance(top_level_code, str) else None
     detail = payload.get("detail")
-    return (
-        code if isinstance(code, str) else None,
-        None if detail is None else str(detail),
-    )
+
+    if isinstance(detail, list):
+        count = len(detail)
+        plural = "" if count == 1 else "s"
+        return top_level_code, f"{count} field{plural} were rejected; the list is on error.body"
+
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if isinstance(code, str):
+            stage = detail.get("stage")
+            where = f" at the {stage} checkpoint" if isinstance(stage, str) and stage else ""
+            return code, f"{code}{where}; the reasons are on error.body"
+        return top_level_code, None
+
+    return top_level_code, None if detail is None else str(detail)
 
 
 def resolve_signed_url(response: httpx.Response) -> str:

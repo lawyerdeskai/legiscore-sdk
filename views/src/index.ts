@@ -14,7 +14,10 @@ export {
   ackKey,
   buildAckSubmission,
   createProxyReports,
+  isPendingSecondApproval,
   pauseOf,
+  PAUSE_GATE_UNMET,
+  readPauseGateRefusal,
   ViewsError,
   type AckDecision,
   type AcknowledgementItem,
@@ -28,6 +31,7 @@ export {
   type MissingDocument,
   type MissingDocumentsPayload,
   type Pause,
+  type PauseGateRefusal,
   type ReportsApi,
   type ReviewDocument,
 } from "./api.js";

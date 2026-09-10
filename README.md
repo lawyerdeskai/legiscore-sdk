@@ -179,7 +179,29 @@ an empty secret fails closed.
 ## Errors and retries
 
 Failures raise `LegiScoreError` with the status, the decoded body and, when the API sent one, a
-stable `code` such as `insufficient_credits`. Branch on the code, not the message.
+stable `code` such as `insufficient_credits`. Branch on the code, not the message. Where the API
+answers with a list of reasons rather than one sentence, the message names the code and the
+reasons stay on `error.body`, which is the part that should not go into a log line.
+
+**Answering a pause has two replies that are not "it worked".** Your organisation can require
+every item at a pause to be actioned before the case may advance, and some organisations need a
+second person to approve the answer. Both reach you through `continueCase`,
+`submitDocumentReview` and `submitAcknowledgements`:
+
+```ts
+import { LegiScore, isPendingSecondApproval, readPauseGateRefusal } from "@legiscore/sdk";
+
+try {
+  const replied = await client.reports.continueCase(caseId, { new_document_ids: ids });
+  if (isPendingSecondApproval(replied)) return waitingOnAnApprover();   // 200, case not advanced
+} catch (error) {
+  const refused = readPauseGateRefusal(error);                          // 422 PAUSE_GATE_UNMET
+  if (!refused) throw error;
+  return showToAPerson(refused.reasons);                                // retrying is refused again
+}
+```
+
+Python is the same two functions, `read_pause_gate_refusal` and `is_pending_second_approval`.
 
 **Do not wrap writes in your own retry loop.** The built-in policy is asymmetric on purpose: reads replay freely, while a write
 replays only when the server can recognise the repeat — creating a case and completing an upload
