@@ -1,7 +1,7 @@
-"""The two answers to a pause that are not "it worked".
+"""The answers to a pause that are not "it worked", and how to clear a strict gate.
 
-A case pauses three times and each pause has a matching resume call. Two things can come back
-from one of those calls that a caller reading only the HTTP status will get wrong:
+A case pauses three times and each pause has a matching resume call. Three things can come
+back from one of those calls that a caller reading only the HTTP status will get wrong:
 
 1. **422 with a structured body.** Your organisation can require every item at a pause to be
    actioned before the case may advance. When something is outstanding the API refuses the
@@ -10,23 +10,35 @@ from one of those calls that a caller reading only the HTTP status will get wron
 2. **200 that did not advance the case.** Where a second person has to approve the answer, the
    resume call records it and parks the case at the same pause. The reply carries
    ``pending_checker: true`` and the case stays in ``awaiting_review`` until the approver acts.
+3. **A strict document-analysis pause refuses until its findings are acknowledged.** The
+   findings, and the fingerprint each one is ticked by, come back on
+   ``reports.get_document_review`` as ``review_findings``. Tick the ones you accept and send
+   them to ``reports.submit_document_review`` as ``document_review_annotations``. The
+   fingerprint is a hash the server computes over the finding's own content; it is the only
+   thing the gate matches on, and it is never computed on this side, so a finding that changed
+   cannot carry a stale tick.
 
-Neither is an SDK invention: both are the API's own wire contract, and the web application
-reads them the same way.
+None of this is an SDK invention: it is the API's own wire contract, and the web application
+reads it the same way.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 from ._transport import LegiScoreError
 
 __all__ = [
+    "FINDING_KINDS",
     "PAUSE_GATE_UNMET",
     "PAUSE_STAGES",
     "PauseGateRefusal",
+    "ReviewFinding",
+    "build_document_review_annotations",
     "is_pending_second_approval",
     "read_pause_gate_refusal",
+    "read_review_findings",
 ]
 
 #: The error code the three resume calls answer with when a pause is not fully actioned.
@@ -95,3 +107,112 @@ def is_pending_second_approval(response: Any) -> bool:
             return wait_for_your_colleague_to_approve()
     """
     return isinstance(response, dict) and response.get("pending_checker") is True
+
+
+# --------------------------------------------------------------------------------------
+# The document-analysis gate
+# --------------------------------------------------------------------------------------
+
+#: The kinds of finding a document-analysis pause can hold, so a caller can branch on one by
+#: name. Read as plain strings: a kind added later arrives as itself rather than being dropped.
+FINDING_KINDS = (
+    "missing_fields",
+    "duplicate_group",
+    "review_flag",
+    "irrelevant",
+    "same_document",
+    "anomaly",
+)
+
+
+class ReviewFinding(NamedTuple):
+    """One document-analysis finding a strict pause gate checks before the case may advance.
+
+    ``fingerprint`` is the server's hash of the finding's own content, and the only thing the
+    gate matches on. Send it back to acknowledge the finding; never compute one on this side,
+    because a client that recomputed the hash would drift from the server the first time the
+    recipe changed, and would then be ticking nothing.
+
+    ``label`` is display text, deliberately excluded from the hash so it can be reworded
+    without invalidating a tick. ``resolved`` means the finding already carries its own
+    recorded answer, so the gate counts it as seen and no tick is needed. ``acknowledged``
+    means it was ticked on an earlier round.
+    """
+
+    fingerprint: str
+    finding_kind: str | None
+    document_id: str | None
+    label: str
+    resolved: bool
+    acknowledged: bool
+
+
+def _optional_text(value: Any) -> str | None:
+    """A wire field that is a string or null, with an empty string read as null."""
+    return (value.strip() or None) if isinstance(value, str) else None
+
+
+def read_review_findings(response: Any) -> list[ReviewFinding]:
+    """The findings on a document-analysis pause, or ``[]`` when there is nothing to tick.
+
+    Accepts the ``reports.get_document_review`` body, or its ``review_findings`` list on its
+    own, so the same function works in a server that proxies the call on to its own front end.
+
+    Empty is a normal answer rather than a problem: an organisation that has not made the
+    document-analysis pause strict has nothing to acknowledge, and a deployment older than the
+    field omits it altogether. A malformed entry is skipped instead of raising, because this
+    reads a pause a case is already sitting in and an exception here would strand it.
+
+        review = client.reports.get_document_review(case_id)
+        findings = read_review_findings(review)
+    """
+    if isinstance(response, list):
+        entries: list[Any] = response
+    elif isinstance(response, dict):
+        raw = response.get("review_findings")
+        entries = raw if isinstance(raw, list) else []
+    else:
+        return []
+
+    findings: list[ReviewFinding] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        fingerprint = _optional_text(entry.get("fingerprint"))
+        if fingerprint is None:
+            continue
+        label = entry.get("label")
+        findings.append(
+            ReviewFinding(
+                fingerprint=fingerprint,
+                finding_kind=_optional_text(entry.get("finding_kind")),
+                document_id=_optional_text(entry.get("document_id")),
+                label=label if isinstance(label, str) else "",
+                resolved=entry.get("resolved") is True,
+                acknowledged=entry.get("acknowledged") is True,
+            )
+        )
+    return findings
+
+
+def build_document_review_annotations(findings: Iterable[ReviewFinding]) -> list[dict[str, Any]]:
+    """Turn findings into the ``document_review_annotations`` a submit carries.
+
+    Every finding that is not already ``resolved`` or ``acknowledged`` becomes one tick, keyed
+    on its fingerprint. Pure, and deliberately never called for you: acknowledging a finding
+    asserts that a person at your organisation has read it and accepts it, on a property
+    someone is lending against. Pass only what that person actually accepted.
+
+        annotations = build_document_review_annotations(
+            finding for finding in findings if a_person_accepted(finding)
+        )
+        client.reports.submit_document_review(
+            case_id,
+            {"proceed_to_searches": True, "document_review_annotations": annotations},
+        )
+    """
+    return [
+        {"fingerprint": finding.fingerprint, "acknowledged": True}
+        for finding in findings
+        if not finding.resolved and not finding.acknowledged
+    ]

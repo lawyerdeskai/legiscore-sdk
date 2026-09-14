@@ -299,7 +299,7 @@
                 "document-review"
               ]
             },
-            "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint."
+            "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint. The reply also carries review_findings, the findings a strict document-analysis policy requires to be acknowledged, each with the fingerprint that acknowledges it. It is an empty list when your organisation has not made this checkpoint strict and when nothing is outstanding."
           }
         },
         {
@@ -511,10 +511,10 @@
                 "submit-document-review"
               ]
             },
-            "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. Findings are marked as seen in the web application; a case whose organisation requires that is refused until someone does.",
+            "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. To clear the first, read review_findings from getDocumentReview and send back one document_review_annotations entry for each finding a person has accepted.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"updates\": [],\n  \"proceed_to_searches\": true\n}",
+              "raw": "{\n  \"updates\": [],\n  \"proceed_to_searches\": true,\n  \"document_review_annotations\": []\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -6,8 +6,10 @@
 This is the reference the AI prompt points at. Adapt it; do not start from scratch.
 
 Read this before adapting: the script deliberately STOPS at the acknowledgement pause instead
-of accepting. Acknowledgements are title risks a human is agreeing to live with. Auto-accepting
-them turns a legal opinion into a rubber stamp, so that decision does not belong in library code.
+of accepting, and stops again at any document-analysis finding your organisation requires
+acknowledged. Both are things a human is agreeing to live with on a property someone is lending
+against. Auto-accepting them turns a legal opinion into a rubber stamp, so neither decision
+belongs in library code.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from legiscore import LegiScore, LegiScoreError, MissingAPIKeyError
+from legiscore import LegiScore, LegiScoreError, MissingAPIKeyError, read_review_findings
 
 PROPERTY = {"address": "Sy. No. 123, Example Village, Telangana"}
 # Answering one pause can surface the next. Bound the rounds so a stuck case cannot spin forever.
@@ -44,6 +46,30 @@ def handle_document_review(client: LegiScore, case_id: str) -> bool:
     review = client.reports.get_document_review(case_id)
     documents = review.get("documents") or []
     print(f"  {len(documents)} document(s) to confirm")
+
+    # A strict document-analysis policy refuses the submit until every finding here has been
+    # acknowledged. The list is empty for an organisation that has not turned that on.
+    outstanding = [
+        finding
+        for finding in read_review_findings(review)
+        if not finding.resolved and not finding.acknowledged
+    ]
+    if outstanding:
+        print(f"\n  {len(outstanding)} finding(s) must be acknowledged before this case moves:")
+        for finding in outstanding:
+            print(f"    - [{finding.finding_kind or 'finding'}] {finding.label}")
+        print(
+            "\n  Stopping here. Acknowledging a finding records that a person read it and\n"
+            "  accepts it, so it is not a decision this script makes for you. Once they have:\n\n"
+            "    from legiscore import build_document_review_annotations\n"
+            "    client.reports.submit_document_review(case_id, body={\n"
+            '        "updates": [], "proceed_to_searches": True,\n'
+            '        "document_review_annotations":'
+            " build_document_review_annotations(accepted),\n"
+            "    })\n\n"
+            "  The fingerprint is the server's hash of the finding. Never compute one yourself."
+        )
+        return False
 
     # Send corrections in `updates`; sending none accepts what it read.
     client.reports.submit_document_review(

@@ -284,7 +284,7 @@ class ReportsOperations(_Namespace):
 
         POST /api/cases/{case_id}/submit-document-review
 
-        Body (SubmitDocumentReviewRequest): proceed_to_searches, updates
+        Body (SubmitDocumentReviewRequest): document_review_annotations, proceed_to_searches, updates
         """
         return self._transport.request(
             "POST",
@@ -436,7 +436,7 @@ class AsyncReportsOperations(_AsyncNamespace):
 
         POST /api/cases/{case_id}/submit-document-review
 
-        Body (SubmitDocumentReviewRequest): proceed_to_searches, updates
+        Body (SubmitDocumentReviewRequest): document_review_annotations, proceed_to_searches, updates
         """
         return await self._transport.request(
             "POST",

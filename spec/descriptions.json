@@ -69,11 +69,11 @@
     },
     "getDocumentReview": {
       "summary": "Read the document-analysis pause",
-      "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint."
+      "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint. The reply also carries review_findings, the findings a strict document-analysis policy requires to be acknowledged, each with the fingerprint that acknowledges it. It is an empty list when your organisation has not made this checkpoint strict and when nothing is outstanding."
     },
     "submitDocumentReview": {
       "summary": "Answer the document-analysis pause",
-      "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. Findings are marked as seen in the web application; a case whose organisation requires that is refused until someone does."
+      "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. To clear the first, read review_findings from getDocumentReview and send back one document_review_annotations entry for each finding a person has accepted."
     },
     "getAcknowledgements": {
       "summary": "Read the risk-acknowledgement pause",
@@ -193,6 +193,18 @@
     "CaseStatusResponse.internal_status": "A finer-grained status behind the public state. When state is awaiting_review, this is what tells you which pause the case is at, so you can call the matching read endpoint: awaiting_document_review, awaiting_documents or awaiting_acknowledgements. Treat any value you do not recognise as 'keep waiting'.",
 
     "SubmitAcknowledgementsRequest.acknowledgements": "One entry per risk returned by getAcknowledgements. Send each generated item back whole, with a decision of 'accepted', 'rejected' or 'undecided' added, and a bypass_reason recording why. An item sent without a decision acknowledges nothing, so a case can look answered when nothing was decided. Do not set is_bypassed yourself: it is derived from decision, and sending both is rejected when they disagree.",
+
+    "SubmitDocumentReviewRequest.document_review_annotations": "One tick per finding from getDocumentReview's review_findings that a person at your organisation has read and accepts. Only the fingerprint is matched on, and acknowledged must be true for the tick to count. A finding already marked resolved needs none. Ticks are merged with the ones the case already carries, so a later round cannot erase an earlier one, and they are what a strict document-analysis policy checks before the case may advance.",
+    "DocumentReviewAnnotation": "One 'seen and considered' tick on a document-analysis finding.",
+    "DocumentReviewAnnotation.fingerprint": "The fingerprint of the finding being acknowledged, copied from review_findings. It is a hash of the finding's own content, so a finding that has changed since you read it does not carry your tick. Never compute one yourself.",
+    "DocumentReviewAnnotation.acknowledged": "Must be true for the tick to count. An entry carrying anything else records nothing and the checkpoint stays refused.",
+    "ReviewFinding": "One document-analysis finding that a strict checkpoint policy requires to be acknowledged before the case may advance.",
+    "ReviewFinding.fingerprint": "The only value that acknowledges this finding. Send it back in document_review_annotations.",
+    "ReviewFinding.finding_kind": "What kind of finding it is: missing_fields, duplicate_group, review_flag, irrelevant, same_document or anomaly. Null where the API sent none, and a kind added later arrives as itself.",
+    "ReviewFinding.document_id": "The document the finding is about, or null when it is about the case as a whole.",
+    "ReviewFinding.label": "Display text for whoever is deciding. Excluded from the fingerprint on purpose, so it can be reworded without invalidating a tick.",
+    "ReviewFinding.resolved": "The finding already carries its own recorded answer, so the checkpoint counts it as seen and it needs no tick.",
+    "ReviewFinding.acknowledged": "It was already ticked on an earlier round.",
 
     "CreateCaseRequest.credit_source_org_id": "Optional. Charge this case to a specific organisation's credit pool instead of the default your key resolves to. The server validates that your key is entitled to that pool; omit it and the right pool is chosen for you.",
     "CreateCaseRequest.credit_source_branch_id": "Optional. Charge this case to a specific branch's credit pool. The server validates the branch against your key; omit it and the right pool is chosen for you.",

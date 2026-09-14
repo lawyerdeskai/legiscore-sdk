@@ -54,12 +54,18 @@ export {
   type WebhookEvent,
 } from "./webhooks.js";
 export {
+  FINDING_KINDS,
   PAUSE_GATE_UNMET,
   PAUSE_STAGES,
+  buildDocumentReviewAnnotations,
   isPendingSecondApproval,
   readPauseGateRefusal,
+  readReviewFindings,
+  type DocumentReviewAnnotation,
+  type FindingKind,
   type PauseGateRefusal,
   type PauseStage,
+  type ReviewFinding,
 } from "./pauses.js";
 
 /** The public lifecycle vocabulary (PublicCaseState in the spec). */

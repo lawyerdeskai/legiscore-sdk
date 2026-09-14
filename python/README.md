@@ -63,6 +63,13 @@ if status["state"] == "awaiting_review":
     client.reports.continue_case(case["case_id"], body={"new_document_ids": [...]})
 ```
 
+Your organisation can require every item at a pause to be actioned before the case may advance,
+which turns a resume into a 422 with the code `PAUSE_GATE_UNMET`. `read_pause_gate_refusal` reads
+the reasons. At the document-review pause those reasons are findings: `get_document_review`
+returns them as `review_findings`, `read_review_findings` parses them, and the ones a person
+accepted go back as `document_review_annotations` on the next `submit_document_review`. Never
+compute a fingerprint yourself, and never tick one in a loop.
+
 `examples/end_to_end.py` in the repository walks one report through every pause.
 
 ## The six modules

@@ -71,7 +71,7 @@ not an empty result.
 | `internal_status` | Ask | Answer with |
 |---|---|---|
 | `awaiting_documents` | `reports.get_missing_documents(case_id)` → key **`missing_documents`** | `reports.continue_case(case_id, body={"new_document_ids": [...]})` or `{"proceed_anyway": True}` |
-| `awaiting_document_review` | `reports.get_document_review(case_id)` → key `documents` | `reports.submit_document_review(case_id, body={"updates": [...], "proceed_to_searches": True})` |
+| `awaiting_document_review` | `reports.get_document_review(case_id)` → keys `documents` and `review_findings` | `reports.submit_document_review(case_id, body={"updates": [...], "proceed_to_searches": True})`, plus `document_review_annotations` when the pause is strict (4a) |
 | `awaiting_acknowledgements` | `reports.get_acknowledgements(case_id)` | `reports.submit_acknowledgements(case_id, body={"acknowledgements": [...]})` |
 
 Three details that will otherwise cost you an afternoon:
@@ -98,8 +98,8 @@ cannot spin forever.
   be actioned before the case may advance, and something is outstanding.
   `read_pause_gate_refusal(error)` returns the stage and a list of plain sentences saying what.
   **Do not retry**: the same body is refused again. Action what the reasons name, then call again.
-  On the document-analysis pause the findings are marked as seen in the web application, so a
-  refusal there is answered by a person, not by your code.
+  On the document-analysis pause that means acknowledging findings, which your code can now do:
+  see 4a.
 - **200 carrying `pending_checker: true`.** Your answer was recorded and the case is held at the
   same pause until a second person approves it. `is_pending_second_approval(reply)` reports it.
   The case stays `awaiting_review`, so a loop that waits again without checking waits for a
@@ -119,6 +119,47 @@ except LegiScoreError as error:
 if is_pending_second_approval(reply):
     return waiting_on_an_approver()               # the case has not advanced
 ```
+
+### 4a. Clearing a strict document-analysis pause
+
+`get_document_review(case_id)` also returns **`review_findings`**: the findings a strict
+`document_analysis` policy needs acknowledged before the case may advance, each with the
+**`fingerprint`** that acknowledges it. Read them, tick the ones a person accepts, send them back
+on the same submit.
+
+```python
+from legiscore import build_document_review_annotations, read_review_findings
+
+review = client.reports.get_document_review(case_id)
+findings = read_review_findings(review)        # [] when this pause is not strict here
+
+accepted = [f for f in findings if a_person_accepted(f)]    # your reviewer, not a loop
+client.reports.submit_document_review(case_id, body={
+    "updates": [],
+    "proceed_to_searches": True,
+    "document_review_annotations": build_document_review_annotations(accepted),
+})
+```
+
+Four things that are not guessable:
+
+- **The fingerprint is the server's hash of the finding's own content**, and the only thing the
+  gate matches on. Never compute one yourself: a client-side hash drifts from the server the
+  first time the recipe changes, and then ticks nothing. There is no route that hands you the
+  ingredients, on purpose.
+- **`acknowledged` must be `true`.** An entry carrying anything else records nothing, and the
+  pause stays refused with the same reasons.
+- **A finding with `resolved: true` already carries its own recorded answer** and needs no tick.
+  `build_document_review_annotations` skips those, and skips anything already `acknowledged`, so
+  re-reading and resubmitting is safe.
+- **`review_findings` is `[]` when the organisation has not made this pause strict**, and is
+  missing altogether on a deployment older than the field. Both mean nothing to tick, not an
+  error, and `read_review_findings` returns `[]` for both.
+
+**Ticking a finding is a human judgement, exactly like an acknowledgement.** It records that
+someone at your organisation read it and accepts it, on a property someone is lending against.
+Surface them and let a person decide. Nothing in the SDK ticks anything on its own.
+
 
 ## 5. Rules that are not guessable
 

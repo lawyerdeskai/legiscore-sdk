@@ -53,6 +53,13 @@ review, or risk acknowledgements before it can finish. Each pause has a matching
 Polling with `waitForCase` is the fallback; configure a webhook and the transitions are pushed to
 you instead.
 
+Your organisation can require every item at a pause to be actioned before the case may advance,
+which turns a resume into a 422 with the code `PAUSE_GATE_UNMET`. `readPauseGateRefusal` reads
+the reasons. At the document-review pause those reasons are findings: `getDocumentReview` returns
+them as `review_findings`, `readReviewFindings` parses them, and the ones a person accepted go
+back as `document_review_annotations` on the next `submitDocumentReview`. Never compute a
+fingerprint yourself, and never tick one in a loop.
+
 ## Next.js 15
 
 The API key is a server-side secret. Keep every call in a Route Handler, a Server Action or a

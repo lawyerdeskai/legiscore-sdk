@@ -194,7 +194,7 @@ export class ReportsOperations {
    *
    * POST /api/cases/{case_id}/submit-document-review
    *
-   * Body (SubmitDocumentReviewRequest): proceed_to_searches, updates
+   * Body (SubmitDocumentReviewRequest): document_review_annotations, proceed_to_searches, updates
    */
   async submitDocumentReview(case_id: string, body?: Record<string, unknown>, query?: Query, options?: RequestOptions): Promise<unknown> {
     return this.transport.request("POST", `/api/cases/${encodeURIComponent(case_id)}/submit-document-review`, { body, query, ...options });

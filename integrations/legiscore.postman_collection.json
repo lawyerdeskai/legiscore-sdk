@@ -405,7 +405,7 @@
                 "document-review"
               ]
             },
-            "description": "Returns the extracted fields per document plus editable_fields."
+            "description": "Returns the extracted fields per document plus editable_fields, and review_findings. review_findings is empty unless your organisation runs this checkpoint strict. Each entry in it carries the fingerprint that acknowledges that finding."
           },
           "response": []
         },
@@ -431,7 +431,7 @@
                 "submit-document-review"
               ]
             },
-            "description": "Send updates: [] to accept the AI extraction as-is.\n\nTo correct a field: {\"document_id\": \"...\", \"field_name\": \"survey_number\", \"new_value\": \"21/A\"} \u2014 field_name must be one of editable_fields from 4a.",
+            "description": "Send updates: [] to accept the AI extraction as-is.\n\nTo correct a field: {\"document_id\": \"...\", \"field_name\": \"survey_number\", \"new_value\": \"21/A\"} \u2014 field_name must be one of editable_fields from 4a.\n\nIf the reply is 422 with the code PAUSE_GATE_UNMET, your organisation requires the findings from 4a to be acknowledged first. Have a person decide, then resend this request with document_review_annotations: [{\"fingerprint\": \"<from review_findings>\", \"acknowledged\": true}]. Never compute a fingerprint yourself.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"updates\": [],\n  \"proceed_to_searches\": true\n}",

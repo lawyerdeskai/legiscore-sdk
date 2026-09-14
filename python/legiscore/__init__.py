@@ -61,11 +61,15 @@ from ._transport import (
     Transport,
 )
 from .pauses import (
+    FINDING_KINDS,
     PAUSE_GATE_UNMET,
     PAUSE_STAGES,
     PauseGateRefusal,
+    ReviewFinding,
+    build_document_review_annotations,
     is_pending_second_approval,
     read_pause_gate_refusal,
+    read_review_findings,
 )
 from .webhooks import InvalidSignature, WebhookEvent, verify_webhook
 
@@ -73,6 +77,7 @@ __all__ = [
     "CASE_STATES",
     "DEFAULT_BASE_URL",
     "DEFAULT_SEARCH_BASE_URL",
+    "FINDING_KINDS",
     "PAUSE_GATE_UNMET",
     "PAUSE_STAGES",
     "TERMINAL_CASE_STATES",
@@ -82,9 +87,12 @@ __all__ = [
     "LegiScoreError",
     "MissingAPIKeyError",
     "PauseGateRefusal",
+    "ReviewFinding",
     "WebhookEvent",
+    "build_document_review_annotations",
     "is_pending_second_approval",
     "read_pause_gate_refusal",
+    "read_review_findings",
     "verify_webhook",
 ]
 

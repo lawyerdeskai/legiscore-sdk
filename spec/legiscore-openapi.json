@@ -180,7 +180,19 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "review_findings": {
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewFinding"
+                      },
+                      "type": "array",
+                      "title": "Review Findings"
+                    }
+                  },
+                  "additionalProperties": true
+                }
               }
             },
             "description": "Successful Response"
@@ -197,7 +209,7 @@
           }
         },
         "summary": "Read the document-analysis pause",
-        "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint."
+        "description": "Read the details extracted from your documents before the government-record searches run against them: document number, date, parties, survey number, house number. Valid only while the case is paused at the document-analysis checkpoint. The reply also carries review_findings, the findings a strict document-analysis policy requires to be acknowledged, each with the fingerprint that acknowledges it. It is an empty list when your organisation has not made this checkpoint strict and when nothing is outstanding."
       }
     },
     "/api/cases/{case_id}/files": {
@@ -666,7 +678,7 @@
           }
         },
         "summary": "Answer the document-analysis pause",
-        "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. Findings are marked as seen in the web application; a case whose organisation requires that is refused until someone does."
+        "description": "Accept the extracted details as they are, or send corrections as a list of field updates, then let the searches run. A wrong survey number here makes every downstream search wrong, so this is the cheapest place to fix one. Two replies mean the case did not move: 422 with a PAUSE_GATE_UNMET code, which lists the findings your organisation still needs marked as seen, and a 200 carrying pending_checker, which holds the case here until a second person approves your answer. To clear the first, read review_findings from getDocumentReview and send back one document_review_annotations entry for each finding a person has accepted."
       }
     },
     "/api/requests": {
@@ -3329,6 +3341,28 @@
         ],
         "title": "DocumentFieldUpdate"
       },
+      "DocumentReviewAnnotation": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Fingerprint",
+            "description": "The fingerprint of the finding being acknowledged, copied from review_findings. It is a hash of the finding's own content, so a finding that has changed since you read it does not carry your tick. Never compute one yourself."
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "title": "Acknowledged",
+            "default": true,
+            "description": "Must be true for the tick to count. An entry carrying anything else records nothing and the checkpoint stays refused."
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "title": "DocumentReviewAnnotation",
+        "description": "One 'seen and considered' tick on a document-analysis finding."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3503,6 +3537,62 @@
           }
         },
         "title": "Replay Counts"
+      },
+      "ReviewFinding": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "description": "The only value that acknowledges this finding. Send it back in document_review_annotations."
+          },
+          "finding_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding Kind",
+            "description": "What kind of finding it is: missing_fields, duplicate_group, review_flag, irrelevant, same_document or anomaly. Null where the API sent none, and a kind added later arrives as itself."
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id",
+            "description": "The document the finding is about, or null when it is about the case as a whole."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Display text for whoever is deciding. Excluded from the fingerprint on purpose, so it can be reworded without invalidating a tick."
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "default": false,
+            "description": "The finding already carries its own recorded answer, so the checkpoint counts it as seen and it needs no tick."
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "title": "Acknowledged",
+            "default": false,
+            "description": "It was already ticked on an earlier round."
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "title": "ReviewFinding",
+        "description": "One document-analysis finding that a strict checkpoint policy requires to be acknowledged before the case may advance."
       },
       "Search": {
         "type": "object",
@@ -4519,6 +4609,16 @@
             "type": "boolean",
             "title": "Proceed To Searches",
             "default": true
+          },
+          "document_review_annotations": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentReviewAnnotation"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Document Review Annotations",
+            "default": [],
+            "description": "One tick per finding from getDocumentReview's review_findings that a person at your organisation has read and accepts. Only the fingerprint is matched on, and acknowledged must be true for the tick to count. A finding already marked resolved needs none. Ticks are merged with the ones the case already carries, so a later round cannot erase an earlier one, and they are what a strict document-analysis policy checks before the case may advance."
           }
         },
         "type": "object",

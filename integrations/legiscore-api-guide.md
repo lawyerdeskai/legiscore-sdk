@@ -283,9 +283,33 @@ Each checkpoint has a **GET** to read what needs review and a **POST** to approv
   "editable_fields": ["document_number", "document_date", "parties", "survey_number", "house_number"],
   "awaiting_since": "2026-06-17T10:05:00Z",
   "duplicate_documents": [],
-  "schema_mismatch_documents": []
+  "schema_mismatch_documents": [],
+  "review_findings": []
 }
 ```
+
+`review_findings` is always present. It is empty unless your organisation runs this checkpoint
+strict, in which case it holds the findings that must be acknowledged before the case may
+advance:
+
+```json
+"review_findings": [
+  {
+    "fingerprint": "1a2b3c4d",
+    "finding_kind": "review_flag",
+    "document_id": "…",
+    "label": "Ownership mismatch",
+    "resolved": false,
+    "acknowledged": false
+  }
+]
+```
+
+`finding_kind` is one of `missing_fields`, `duplicate_group`, `review_flag`, `irrelevant`,
+`same_document` or `anomaly`. `document_id` is null on a finding about the case as a whole.
+`resolved` means the finding already carries its own recorded answer, so it needs no
+acknowledgement. `label` is display text and is deliberately excluded from the fingerprint, so it
+can be reworded without invalidating an acknowledgement.
 
 **Approve:** `POST /api/cases/{case_id}/submit-document-review`
 
@@ -293,10 +317,26 @@ Each checkpoint has a **GET** to read what needs review and a **POST** to approv
 |---|---|---|---|
 | `updates` | object[] | `[]` | Field corrections. Each: `{ "document_id": "...", "field_name": "<one of editable_fields>", "new_value": <any> }` |
 | `proceed_to_searches` | boolean | `true` | Continue to external searches after applying edits. |
+| `document_review_annotations` | object[] | `[]` | One acknowledgement per outstanding finding: `{ "fingerprint": "<from review_findings>", "acknowledged": true }`. Up to 500. Merged with what the case already carries, so an earlier round is never erased. |
 
 ```json
 { "updates": [], "proceed_to_searches": true }
 ```
+
+Strict, with one finding acknowledged:
+
+```json
+{
+  "updates": [],
+  "proceed_to_searches": true,
+  "document_review_annotations": [{ "fingerprint": "1a2b3c4d", "acknowledged": true }]
+}
+```
+
+The fingerprint is a hash the server computes over the finding's own content, and it is the only
+value the checkpoint matches on. Do not compute one yourself: the ingredients are deliberately
+not returned, and a client-side hash would drift from the server the first time the recipe
+changed. `acknowledged` must be `true`; anything else records nothing.
 
 Response: `{ "success": true, "case_id": "...", "task_id": "...", "message": "...", "updates_applied": 0 }`.
 
@@ -637,6 +677,11 @@ structured body rather than advancing:
 to be shown to whoever is answering the checkpoint. **Retrying the same body is refused again.**
 Action what the reasons name and call again. Test for this before any other non-2xx branch: a
 `400` from these endpoints means the case already advanced, which is the opposite conclusion.
+
+On `review_analysis` the outstanding items are findings, and the round trip that clears them is
+in Section 6: read `review_findings` from `GET /document-review`, have a person decide, and send
+back one `document_review_annotations` entry per finding they accepted. The `errors` carry only
+the label, never the fingerprint, so the read is the only place to get one.
 
 **200 with `pending_checker: true`.** Where a second person has to approve the answer, the reply
 is `{"success": true, "advanced": false, "pending_checker": true, "stage": "...", ...}`. The answer

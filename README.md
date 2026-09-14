@@ -44,6 +44,10 @@ Acknowledgements are title risks a human is agreeing to live with. Each takes a 
 `accepted`, `rejected` or `undecided`, and an item sent without one acknowledges nothing. Do not
 decide them in code.
 
+The document-review pause can be strict too. It then returns `review_findings`, each carrying the
+`fingerprint` that acknowledges it, and refuses the submit until the outstanding ones are
+acknowledged. Read them, let a person decide, and send the ticks back on the same submit.
+
 ## Modules
 
 One key, six namespaces, identical in both languages (`client.reports.get_case_status` /
@@ -202,6 +206,25 @@ try {
 ```
 
 Python is the same two functions, `read_pause_gate_refusal` and `is_pending_second_approval`.
+
+A refusal at the document-analysis pause is cleared in code, not only in the web application.
+`getDocumentReview` returns `review_findings`, `readReviewFindings` parses them, and the ticks a
+person accepted go back as `document_review_annotations`:
+
+```ts
+import { buildDocumentReviewAnnotations, readReviewFindings } from "@legiscore/sdk";
+
+const findings = readReviewFindings(await client.reports.getDocumentReview(caseId));
+await client.reports.submitDocumentReview(caseId, {
+  proceed_to_searches: true,
+  document_review_annotations: buildDocumentReviewAnnotations(findings.filter(aPersonAccepted)),
+});
+```
+
+The fingerprint is the server's hash of the finding's own content, so never compute one here.
+`read_review_findings` and `build_document_review_annotations` are the Python names. Findings
+already marked `resolved` need no tick, and an organisation that has not made this pause strict
+returns an empty list.
 
 **Do not wrap writes in your own retry loop.** The built-in policy is asymmetric on purpose: reads replay freely, while a write
 replays only when the server can recognise the repeat — creating a case and completing an upload
