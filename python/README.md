@@ -185,9 +185,13 @@ the signature check then fails — this is the single most common integration bu
 than five minutes are rejected as replays, and an empty secret fails closed rather than trusting
 the delivery. Deliveries can repeat, so key your own processing on `event.delivery_id`.
 
-**Setting the webhook up.** Create it in the LegiScore dashboard with auth type **HMAC**. The secret
-it shows you is `WEBHOOK_SECRET`; there is no other place to get it, and a webhook created with any
-other auth type sends no `X-LegiScore-Signature` at all, so verification will reject every delivery.
+**Setting the webhook up.** Either `client.webhooks.create_webhook({"name": ..., "url": ..., "events": [...]})`
+or the LegiScore dashboard with auth type **HMAC**. The secret comes back exactly once, in the
+create response as `data.secret`, and is never returned by a later list or get — that value is
+`WEBHOOK_SECRET`. If you lose it, or if we registered the webhook for you, mint a fresh one with
+`client.webhooks.rotate_webhook_secret(webhook_id)` and update your verifier. A webhook created
+with any other auth type sends no `X-LegiScore-Signature` at all, so verification will reject every
+delivery.
 
 **Leave "Allowed domains" empty on a server-side key.** A non-empty list is checked against the
 `Origin` or `Referer` header, which a server-to-server call does not send, so every request returns
