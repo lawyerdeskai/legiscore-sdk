@@ -277,10 +277,11 @@ def receive(request):
 `body` must be the **raw request bytes**. Re-serialising parsed JSON changes the bytes and every
 signature check then fails. This is the most common webhook bug.
 
-Events you will actually receive today: `report.paused.missing_documents`,
+Events you will actually receive today: `report.started`, `report.paused.missing_documents`,
 `report.paused.review`, `report.paused.acknowledgements`, `report.completed`, `report.failed`.
-`asset.created`, `report.auto_triggered` and `report.started` are in the catalogue but are not
-emitted yet — do not build on them. An older dispatch path can still send the legacy names
+`report.started` fires once per report at the top of the pipeline, before any checkpoint.
+`asset.created` and `report.auto_triggered` are in the catalogue but are not emitted yet — do
+not build on those two. An older dispatch path can still send the legacy names
 `case.paused` and `case.completed`; treat `case.paused` as a pause and `case.completed` as a
 completion rather than dropping them, and use `event.is_pause` rather than comparing strings.
 

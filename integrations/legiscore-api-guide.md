@@ -54,7 +54,7 @@ Every request is authenticated with a partner API key (prefix `lsk_`). We issue 
 | Invalid / revoked / expired key | `401 invalid_api_key` |
 | Domain allowlist | Optional. If set on your key, requests must carry a matching `Origin`/`Referer`. Left empty for server-to-server use. |
 
-Your key is bound to your organisation, so report credits, default scenario, custom fields and webhook configuration are all resolved automatically from your org.
+Your key is bound to your organisation, so report credits, default scenario, custom fields and webhook configuration are all resolved automatically from your org. The same binding is what lets the key manage that org's webhooks (section 8.7).
 
 > **Checkpoint permissions.** Driving the review checkpoints over the API (Section 6) needs your key to be issued with checkpoint permissions. The read-only surface (`/status`, `/result`, `/files`) is always available. A `403` on a submit endpoint means asking us to enable it, not a bad request — or run in straight-through mode with the checkpoints off.
 
@@ -472,7 +472,7 @@ This is a **separate endpoint** from `/files`: the file list and the ZIP carry y
 
 ## 8. Webhooks (push callbacks)
 
-Instead of (or alongside) polling, LegiScore can call your server at each stage. You give us a callback URL; we configure it against your org. Your endpoint receives an HTTP `POST` with a JSON body.
+Instead of (or alongside) polling, LegiScore can call your server at each stage. Your endpoint receives an HTTP `POST` with a JSON body. You can register and manage the callback yourself with your API key (section 8.7), or give us the URL and we configure it against your org.
 
 ### 8.1 Events
 
@@ -480,13 +480,14 @@ Subscribe to these canonical event keys. For the property due-diligence flow the
 
 | Event | Fires when |
 |---|---|
+| `report.started` | Processing has begun. Fires once per report, at the top of the pipeline, before any checkpoint. |
 | `report.paused.review` | Paused at checkpoint 1 (document analysis / risks detected). |
 | `report.paused.missing_documents` | Paused at checkpoint 2 (missing documents). |
 | `report.paused.acknowledgements` | Paused at checkpoint 3 (risk acknowledgement). |
 | `report.completed` | **Final report ready.** |
 | `report.failed` | Report failed. |
 
-> Three further keys exist in the catalogue — `asset.created`, `report.auto_triggered`, `report.started` — but are **not emitted by the pipeline yet**. Do not build on them as live; we will tell you when they go live.
+> Two further keys exist in the catalogue — `asset.created` and `report.auto_triggered` — but are **not emitted by the pipeline yet**. Do not build on them as live; we will tell you when they go live.
 
 ### 8.2 Default payload (envelope)
 
@@ -595,6 +596,36 @@ Verify against the **raw received body** (do not re-serialise — it is compact,
 - `4xx` is treated as a permanent config error — **not retried**.
 - `5xx` or a network/timeout error is **retried up to 5 times** with exponential backoff (~30 min total).
 - Every attempt is logged on our side so a failing endpoint is diagnosable. If all retries fail you can always re-fetch with `GET /api/cases/{case_id}/result`.
+
+### 8.7 Managing your webhook with your API key
+
+You do not have to ask us to register or change a callback. Your `lsk_` key manages the webhooks of the org it is bound to, and only that org.
+
+| Call | Does |
+|---|---|
+| `GET /api/v1/webhooks` | List your org's webhooks. Never returns the signing secret. |
+| `POST /api/v1/webhooks` | Register one. Body: `name`, `url`, `events` (non-empty), optional `description`, `custom_headers`. |
+| `PATCH /api/v1/webhooks/{webhook_id}` | Change `name`, `description`, `url`, `events`, `custom_headers`, `is_active`. |
+| `DELETE /api/v1/webhooks/{webhook_id}` | Remove it. |
+| `POST /api/v1/webhooks/{webhook_id}/rotate-secret` | Mint a fresh HMAC signing secret. |
+
+`url` must be `https` and must resolve to a public address.
+
+**The signing secret is returned exactly once**, in the response to `create` and to `rotate-secret`, as `data.secret`. It is never returned by `list` or `get` afterwards. Store it when you see it; if you lose it, rotate and update your verifier.
+
+```bash
+curl -X POST https://opinion.legiscore.in/api/v1/webhooks \
+  -H "X-API-Key: lsk_..." -H "Content-Type: application/json" \
+  -d '{
+        "name": "Production callback",
+        "url": "https://api.example.com/webhooks/legiscore",
+        "events": ["report.started", "report.paused.review", "report.completed", "report.failed"]
+      }'
+```
+
+If we registered the webhook for you, rotating the secret with your own key is the clean way to take ownership of it: the value is generated on our side and shown only to you, so it never travels by email.
+
+Both SDKs wrap these: `client.webhooks.create_webhook(...)` / `rotate_webhook_secret(...)` in Python, `client.webhooks.createWebhook(...)` / `rotateWebhookSecret(...)` in Node. A rotate is never retried automatically, since a retried rotate would mint a second secret.
 
 ---
 
