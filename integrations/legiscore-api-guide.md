@@ -637,7 +637,7 @@ Sent as the `propertyFocus` object on create. Loosely typed; the canonical shape
 |---|---|---|---|
 | `property_type` | string | yes | one of `building`, `sites`, `agricultural` (default `building`). |
 | `state` | string | yes | full state name, e.g. `"Andhra Pradesh"`. |
-| `state_id` | integer | yes | numeric state id (e.g. AP = 2, Maharashtra = 21). We will share the id table. |
+| `state_id` | integer | yes | numeric state id (e.g. AP = 2, Maharashtra = 21). Fetch the live table from `GET https://legiscore.in/api/search/states?limit=100` — no API key needed. Ids are stable; never hardcode a copy. |
 | `property_details` | object | yes | **free-form** key/value bag — survey number, district, village, house no, door no, etc. Any portal-specific field goes here verbatim. |
 | `kb_config` | object | no | knowledge-base control. Default `{ "use_kb": true, "kb_central": true, "kb_state": true, "kb_category": "all" }`. |
 | `additional_search_options` | object | no | pre-selected search ids: `ec_search_id`, `prohibited_search_id`, `district_court_search_id`, `property_tax_search_id`, `rera_search_id`, etc. Usually omitted — the platform discovers what to search. |
