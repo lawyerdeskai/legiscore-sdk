@@ -48,6 +48,29 @@ Submit a search, then poll `getSearch` until its status is `succeeded`, `failed`
 then pull each file with `getSearchDocument`, which resolves to bytes. Override the host with
 `searchBaseUrl` only if you have been told to.
 
+Karnataka places go as the portal's own codes; resolve them with `getSearchLookups`
+(`kaveri_*` dims for the encumbrance certificate, `bhoomi_*` for RTC, Akarband and Village Map):
+
+```ts
+// Encumbrance certificate (Kaveri 2.0), 2004 onwards.
+await client.search.submitSearch({
+  state: 'karnataka',
+  search_type: 'ec',
+  params: {
+    district: '1', taluk: '193', hobli: '1085', village: '28867', // Kudlu
+    property_kind: 'agricultural', // or 'non_agricultural' + property_number_type + property_number
+    survey_number: '178',
+  },
+});
+
+// RTC / Pahani (Bhoomi): Bengaluru Rural / Nelamangala / Kasaba / Gollahalli, survey 59.
+await client.search.submitSearch({
+  state: 'karnataka',
+  search_type: 'rtc',
+  params: { district: '21', taluk: '1', hobli: '1', village: '44', survey_no: '59' },
+});
+```
+
 A case can pause and wait for you — `awaiting_review` means it needs missing documents, a document
 review, or risk acknowledgements before it can finish. Each pause has a matching resume method.
 Polling with `waitForCase` is the fallback; configure a webhook and the transitions are pushed to

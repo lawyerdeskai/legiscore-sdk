@@ -118,6 +118,42 @@ A succeeded search with `found` False means the source was reached and holds not
 property. That is an answer, not a failure. Running out of search credits raises `LegiScoreError`
 with `status_code` 402 and `code` `"insufficient_credits"`.
 
+### Karnataka
+
+Karnataka places are sent as the portal's own codes, and each portal numbers them its own way.
+Resolve them with `get_search_lookups`: Kaveri EC uses `dim="kaveri_district"`,
+`"kaveri_taluk"`, `"kaveri_hobli"`, `"kaveri_village"` (pass the chosen parent as `parent=`);
+RTC, Akarband and Village Map use `"bhoomi_district"` ... `"bhoomi_village"` (pass every ancestor
+by name: `district=`, `taluk=`, `hobli=`). `get_search_catalog(state="karnataka")` lists every
+field.
+
+```python
+# Encumbrance certificate from Kaveri 2.0, 2004 onwards. Agricultural land takes survey_number;
+# anything else takes property_number_type + property_number instead.
+ec = client.search.submit_search(
+    body={
+        "state": "karnataka",
+        "search_type": "ec",
+        "params": {
+            "district": "1", "taluk": "193", "hobli": "1085", "village": "28867",  # Kudlu
+            "property_kind": "agricultural",
+            "survey_number": "178",
+            "from_date": "01/01/2010",  # optional; before 01/01/2004 is refused
+        },
+    }
+)
+
+# RTC / Pahani from Bhoomi. Codes are numbered within their parent: 21/1/1/44 is
+# Bengaluru Rural / Nelamangala / Kasaba / Gollahalli.
+rtc = client.search.submit_search(
+    body={
+        "state": "karnataka",
+        "search_type": "rtc",
+        "params": {"district": "21", "taluk": "1", "hobli": "1", "village": "44", "survey_no": "59"},
+    }
+)
+```
+
 ## Concurrency
 
 `LegiScore` holds one connection pool and is safe to share across threads. `AsyncLegiScore` holds
