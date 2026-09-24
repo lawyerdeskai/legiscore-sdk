@@ -938,6 +938,16 @@
       "title": "Search Catalog Field Lookup"
     },
 
+    "SearchCatalogFieldCondition": {
+      "type": "object",
+      "required": ["field", "in"],
+      "properties": {
+        "field": { "type": "string", "title": "Field" },
+        "in": { "type": "array", "items": { "type": "string" }, "title": "In" }
+      },
+      "title": "Search Catalog Field Condition"
+    },
+
     "SearchCatalogField": {
       "type": "object",
       "required": ["name", "label", "type", "required"],
@@ -946,7 +956,7 @@
         "label": { "type": "string", "title": "Label" },
         "type": {
           "type": "string",
-          "enum": ["lookup", "text", "tags", "select", "year"],
+          "enum": ["lookup", "text", "tags", "select", "year", "date"],
           "title": "Type"
         },
         "required": { "type": "boolean", "title": "Required" },
@@ -967,7 +977,17 @@
             { "type": "null" }
           ],
           "title": "Lookup"
-        }
+        },
+        "show_when": {
+          "anyOf": [
+            { "$ref": "#/components/schemas/SearchCatalogFieldCondition" },
+            { "type": "null" }
+          ],
+          "title": "Show When"
+        },
+        "max_length": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "title": "Max Length" },
+        "min": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "Min" },
+        "col_span": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "title": "Col Span" }
       },
       "title": "Search Catalog Field"
     },

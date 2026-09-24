@@ -4038,7 +4038,8 @@
               "text",
               "tags",
               "select",
-              "year"
+              "year",
+              "date"
             ],
             "title": "Type"
           },
@@ -4082,9 +4083,74 @@
             ],
             "title": "Lookup",
             "description": "The dimension to pass to getSearchLookups for this field, and which fields must be chosen before it can be asked."
+          },
+          "show_when": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchCatalogFieldCondition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Show When"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "col_span": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Col Span"
           }
         },
         "title": "Search Catalog Field"
+      },
+      "SearchCatalogFieldCondition": {
+        "type": "object",
+        "required": [
+          "field",
+          "in"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "in": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "In"
+          }
+        },
+        "title": "Search Catalog Field Condition"
       },
       "SearchCatalogFieldLookup": {
         "type": "object",
